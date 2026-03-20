@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://provenance.dev/ajp/schema/0.1/job-offer.json",
+  "title": "AJP JobOffer",
+  "description": "Agent Job Protocol v0.1 — JobOffer message",
+  "type": "object",
+  "required": ["ajp", "job_id", "from", "to", "task", "budget", "issued_at", "expires_at", "signature"],
+
+  "properties": {
+
+    "ajp": { "type": "string", "enum": ["0.1"] },
+
+    "job_id": {
+      "type": "string",
+      "description": "Unique job identifier. Use ULID or UUID.",
+      "minLength": 8
+    },
+
+    "parent_job_id": {
+      "type": ["string", "null"],
+      "description": "Set when this job was created by an orchestrator as a sub-task."
+    },
+
+    "from": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["human", "agent", "orchestrator"] },
+        "id": { "type": ["string", "null"], "description": "Platform user ID for human senders" },
+        "provenance_id": { "type": ["string", "null"], "description": "Required when type is agent or orchestrator" }
+      },
+      "if": { "properties": { "type": { "enum": ["agent", "orchestrator"] } } },
+      "then": { "required": ["provenance_id"] }
+    },
+
+    "to": {
+      "type": "object",
+      "required": ["provenance_id"],
+      "properties": {
+        "provenance_id": { "type": "string" }
+      }
+    },
+
+    "task": {
+      "type": "object",
+      "required": ["type", "instruction"],
+      "properties": {
+        "type": { "type": "string", "description": "Domain-specific task type e.g. research, extract, summarize" },
+        "instruction": { "type": "string", "description": "Natural language task description", "minLength": 1 },
+        "input": { "type": "object", "description": "Structured input data" },
+        "output_format": { "type": "string", "enum": ["json", "text", "markdown", "html", "any"] }
+      }
+    },
+
+    "context": {
+      "type": "object",
+      "properties": {
+        "credentials": { "type": "object", "description": "Any credentials the agent needs to complete the task" },
+        "memory": { "type": "array", "description": "Prior conversation or context to include" },
+        "constraints": { "type": "array", "items": { "type": "string" }, "description": "Additional constraints for this specific job" }
+      }
+    },
+
+    "budget": {
+      "type": "object",
+      "required": ["max_usd"],
+      "properties": {
+        "max_usd": { "type": "number", "minimum": 0, "description": "Maximum cost in USD" },
+        "max_seconds": { "type": "number", "minimum": 1, "description": "Maximum execution time" },
+        "max_llm_tokens": { "type": "number", "minimum": 1, "description": "Maximum LLM tokens across all calls" }
+      }
+    },
+
+    "callback": {
+      "type": ["object", "null"],
+      "description": "Where to POST the JobResult when complete. Null = polling only.",
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "headers": { "type": "object" }
+      },
+      "required": ["url"]
+    },
+
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+
+    "signature": {
+      "type": "string",
+      "description": "HMAC-SHA256 of the message body excluding this field. Format: sha256:hex",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  },
+
+  "additionalProperties": false
+}

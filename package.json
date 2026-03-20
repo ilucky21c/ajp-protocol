@@ -1,0 +1,20 @@
+{
+  "name": "ajp-protocol",
+  "version": "0.1.0",
+  "description": "Agent Job Protocol — standard interaction layer for the agent internet",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "keywords": ["ai-agent", "agent-protocol", "ajp", "provenance", "llm", "agent-to-agent"],
+  "license": "MIT",
+  "dependencies": {
+    "provenance-protocol": "^0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/provenance-protocol/ajp"
+  },
+  "homepage": "https://provenance.dev/ajp"
+}
