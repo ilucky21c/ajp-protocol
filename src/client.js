@@ -5,29 +5,37 @@
  * Consistent with provenance-protocol SDK class structure.
  */
 
-import { sign, generateJobId, validateOffer } from './utils.js';
+import { sign, signWithKey, generateJobId, validateOffer } from './utils.js';
 import { Provenance } from 'provenance-protocol';
 
 export class AJPClient {
 
   /**
    * @param {object} opts
-   * @param {object} opts.from          — sender identity
-   * @param {string} opts.from.type     — 'human' | 'agent' | 'orchestrator'
-   * @param {string} [opts.from.id]     — platform user ID (human only)
+   * @param {object} opts.from               — sender identity
+   * @param {string} opts.from.type          — 'human' | 'agent' | 'orchestrator'
+   * @param {string} [opts.from.id]          — platform user ID (human only)
    * @param {string} [opts.from.provenance_id] — required for agent/orchestrator
-   * @param {string} opts.secret        — HMAC signing secret
-   * @param {string} [opts.provenanceApiUrl]   — override Provenance API URL
-   * @param {number} [opts.defaultTimeoutMs]   — default job timeout in ms (30s)
+   * @param {string} [opts.privateKey]       — Base64 PKCS8 Ed25519 private key (PROVENANCE_PRIVATE_KEY).
+   *                                           Required for agent/orchestrator senders. Allows any
+   *                                           indexed agent to call any other without a shared secret.
+   * @param {string} [opts.secret]           — HMAC secret. Required for human senders only.
+   * @param {string} [opts.provenanceApiUrl] — override Provenance API URL
+   * @param {number} [opts.defaultTimeoutMs] — default job timeout in ms (30s)
    */
-  constructor({ from, secret, provenanceApiUrl, defaultTimeoutMs = 30000 }) {
+  constructor({ from, privateKey, secret, provenanceApiUrl, defaultTimeoutMs = 30000 }) {
     this.from = from;
-    this.secret = secret;
+    this.privateKey = privateKey || null;
+    this.secret = secret || null;
     this.defaultTimeoutMs = defaultTimeoutMs;
     this.provenance = new Provenance({ apiUrl: provenanceApiUrl });
 
-    if ((from.type === 'agent' || from.type === 'orchestrator') && !from.provenance_id) {
-      throw new Error('from.provenance_id required when type is agent or orchestrator');
+    if (from.type === 'agent' || from.type === 'orchestrator') {
+      if (!from.provenance_id) throw new Error('from.provenance_id required when type is agent or orchestrator');
+      if (!privateKey) throw new Error('privateKey (PROVENANCE_PRIVATE_KEY) required for agent/orchestrator senders');
+    }
+    if (from.type === 'human' && !secret) {
+      throw new Error('secret required for human senders');
     }
   }
 
@@ -93,8 +101,10 @@ export class AJPClient {
       signature: '',
     };
 
-    // Sign it
-    offer.signature = sign(offer, this.secret);
+    // Sign with Ed25519 (agents/orchestrators) or HMAC (humans)
+    offer.signature = (this.from.type === 'agent' || this.from.type === 'orchestrator')
+      ? signWithKey(offer, this.privateKey)
+      : sign(offer, this.secret);
 
     // Validate before sending
     const { valid, errors } = validateOffer(offer);

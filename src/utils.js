@@ -3,31 +3,74 @@
  * Consistent with provenance-protocol SDK conventions.
  */
 
-import crypto from 'crypto';
+import crypto, { createPrivateKey, createPublicKey, sign as nodeSign, verify as nodeVerify } from 'crypto';
 
 // ── Signing ───────────────────────────────────────────────────────────────
 
 /**
+ * Canonical form for signing — sorts keys, excludes `signature` field.
+ * Used by both HMAC and Ed25519 paths for consistency.
+ */
+function _canonical(body) {
+  const { signature: _, ...rest } = body;
+  return JSON.stringify(rest, Object.keys(rest).sort());
+}
+
+/**
  * Sign a message body with HMAC-SHA256.
- * Excludes the `signature` field from the hash input.
+ * Used for human callers (no Provenance identity).
  */
 export function sign(body, secret) {
-  const { signature: _, ...rest } = body;
-  const canonical = JSON.stringify(rest, Object.keys(rest).sort());
-  const hash = crypto.createHmac('sha256', secret).update(canonical).digest('hex');
+  const hash = crypto.createHmac('sha256', secret).update(_canonical(body)).digest('hex');
   return `sha256:${hash}`;
 }
 
 /**
- * Verify a signed message. Returns true if valid.
+ * Verify an HMAC-SHA256 signature. Returns true if valid.
  */
 export function verify(body, secret) {
-  if (!body.signature) return false;
+  if (!body.signature?.startsWith('sha256:')) return false;
   const expected = sign(body, secret);
   return crypto.timingSafeEqual(
     Buffer.from(body.signature),
     Buffer.from(expected)
   );
+}
+
+/**
+ * Sign a message body with Ed25519.
+ * Used by agents and orchestrators — consistent with provenance-protocol/keygen.js.
+ *
+ * @param {object} body             Message body (signature field excluded automatically)
+ * @param {string} privateKeyBase64 Base64 PKCS8 DER private key (PROVENANCE_PRIVATE_KEY)
+ * @returns {string}                Signature string: "ed25519:<base64>"
+ */
+export function signWithKey(body, privateKeyBase64) {
+  const privateKey = createPrivateKey({
+    key: Buffer.from(privateKeyBase64, 'base64'),
+    format: 'der',
+    type: 'pkcs8',
+  });
+  const sig = nodeSign(null, Buffer.from(_canonical(body), 'utf8'), privateKey);
+  return `ed25519:${sig.toString('base64')}`;
+}
+
+/**
+ * Verify an Ed25519 signature using a public key from the Provenance index.
+ *
+ * @param {object} body            Message body including signature field
+ * @param {string} publicKeyBase64 Base64 SPKI DER public key (from Provenance profile)
+ * @returns {boolean}
+ */
+export function verifyWithKey(body, publicKeyBase64) {
+  if (!body.signature?.startsWith('ed25519:')) return false;
+  const publicKey = createPublicKey({
+    key: Buffer.from(publicKeyBase64, 'base64'),
+    format: 'der',
+    type: 'spki',
+  });
+  const sigBuffer = Buffer.from(body.signature.slice('ed25519:'.length), 'base64');
+  return nodeVerify(null, Buffer.from(_canonical(body), 'utf8'), publicKey, sigBuffer);
 }
 
 // ── Job ID generation ─────────────────────────────────────────────────────

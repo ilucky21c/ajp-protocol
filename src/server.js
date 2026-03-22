@@ -6,16 +6,19 @@
  * Express, Next.js API routes, Fastify, or any Node HTTP framework.
  */
 
-import { verify, sign, validateOffer, JOB_STATUS, FROM_TYPE } from './utils.js';
+import { verify, verifyWithKey, sign, signWithKey, validateOffer, JOB_STATUS, FROM_TYPE } from './utils.js';
 import { Provenance } from 'provenance-protocol';
 
 export class AJPServer {
 
   /**
    * @param {object} opts
-   * @param {string} opts.provenanceId    — this agent's Provenance ID
-   * @param {string} opts.secret          — HMAC verification secret (must match client)
-   * @param {Function} opts.onJob         — async (job) => result — your agent logic
+   * @param {string} opts.provenanceId       — this agent's Provenance ID
+   * @param {string} opts.privateKey         — Base64 PKCS8 Ed25519 private key (PROVENANCE_PRIVATE_KEY).
+   *                                           Used to sign job results so callers can verify authenticity.
+   * @param {string} [opts.secret]           — HMAC secret for verifying human callers. Optional if you
+   *                                           only accept agent/orchestrator callers.
+   * @param {Function} opts.onJob            — async (job) => result — your agent logic
    * @param {object} [opts.trustRequirements] — applied to all agent/orchestrator senders
    * @param {boolean} [opts.trustRequirements.requireDeclared]
    * @param {string[]} [opts.trustRequirements.requireConstraints]
@@ -26,13 +29,16 @@ export class AJPServer {
    */
   constructor({
     provenanceId,
+    privateKey,
     secret,
     onJob,
     trustRequirements = {},
     provenanceApiUrl,
   }) {
+    if (!privateKey) throw new Error('privateKey (PROVENANCE_PRIVATE_KEY) required — used to sign job results');
     this.provenanceId = provenanceId;
-    this.secret = secret;
+    this.privateKey = privateKey;
+    this.secret = secret || null;
     this.onJob = onJob;
     this.trustRequirements = trustRequirements;
     this.provenance = new Provenance({ apiUrl: provenanceApiUrl });
@@ -55,8 +61,26 @@ export class AJPServer {
         }
 
         // 2. Verify signature
-        if (!verify(offer, this.secret)) {
-          return this._json(res, 401, { error: 'Invalid signature' });
+        if (offer.from.type === FROM_TYPE.HUMAN) {
+          // Human callers: HMAC-SHA256 with shared secret
+          if (!this.secret) {
+            return this._json(res, 403, { error: 'This agent does not accept human callers' });
+          }
+          if (!verify(offer, this.secret)) {
+            return this._json(res, 401, { error: 'Invalid signature' });
+          }
+        } else {
+          // Agent/orchestrator callers: Ed25519 — fetch public key from Provenance index
+          const senderProfile = await this.provenance.check(offer.from.provenance_id).catch(() => null);
+          if (!senderProfile?.found) {
+            return this._json(res, 403, { error: 'Sender not found in Provenance index' });
+          }
+          if (!senderProfile.public_key) {
+            return this._json(res, 403, { error: 'Sender has no public key registered — cannot verify identity' });
+          }
+          if (!verifyWithKey(offer, senderProfile.public_key)) {
+            return this._json(res, 401, { error: 'Invalid signature' });
+          }
         }
 
         // 3. Trust check — required for agent/orchestrator senders
@@ -198,14 +222,14 @@ export class AJPServer {
       job.updated_at = job.completed_at;
       job.usage.duration_seconds = durationSeconds;
 
-      // Sign the result so callers can verify it came from this agent
-      job.signature = sign({
+      // Sign the result with Ed25519 — callers verify using this agent's public key from Provenance index
+      job.signature = signWithKey({
         job_id: job.job_id,
         status: job.status,
         output: job.output,
         completed_at: job.completed_at,
         agent: { provenance_id: this.provenanceId },
-      }, this.secret);
+      }, this.privateKey);
 
       this.jobs.set(jobId, job);
 
