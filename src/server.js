@@ -6,7 +6,7 @@
  * Express, Next.js API routes, Fastify, or any Node HTTP framework.
  */
 
-import { verify, validateOffer, JOB_STATUS, FROM_TYPE } from './utils.js';
+import { verify, sign, validateOffer, JOB_STATUS, FROM_TYPE } from './utils.js';
 import { Provenance } from 'provenance-protocol';
 
 export class AJPServer {
@@ -129,10 +129,9 @@ export class AJPServer {
         if (job.status === JOB_STATUS.COMPLETED) {
           response.output = job.output;
           response.usage = job.usage;
-          response.agent = {
-            provenance_id: this.provenanceId,
-          };
+          response.agent = { provenance_id: this.provenanceId };
           response.completed_at = job.completed_at;
+          response.signature = job.signature;
         }
 
         if (job.status === JOB_STATUS.FAILED) {
@@ -184,7 +183,13 @@ export class AJPServer {
     this.jobs.set(jobId, job);
 
     try {
-      const output = await this.onJob(job);
+      const maxSeconds = job.budget?.max_seconds ?? 120;
+      const output = await Promise.race([
+        this.onJob(job),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Job exceeded max_seconds (${maxSeconds}s)`)), maxSeconds * 1000)
+        ),
+      ]);
 
       const durationSeconds = (Date.now() - startTime) / 1000;
       job.status = JOB_STATUS.COMPLETED;
@@ -192,6 +197,16 @@ export class AJPServer {
       job.completed_at = new Date().toISOString();
       job.updated_at = job.completed_at;
       job.usage.duration_seconds = durationSeconds;
+
+      // Sign the result so callers can verify it came from this agent
+      job.signature = sign({
+        job_id: job.job_id,
+        status: job.status,
+        output: job.output,
+        completed_at: job.completed_at,
+        agent: { provenance_id: this.provenanceId },
+      }, this.secret);
+
       this.jobs.set(jobId, job);
 
       // Deliver result via callback if set
@@ -200,7 +215,7 @@ export class AJPServer {
       }
 
     } catch (e) {
-      job.status = JOB_STATUS.FAILED;
+      job.status = e.message.includes('max_seconds') ? JOB_STATUS.EXPIRED : JOB_STATUS.FAILED;
       job.error = e.message;
       job.updated_at = new Date().toISOString();
       this.jobs.set(jobId, job);

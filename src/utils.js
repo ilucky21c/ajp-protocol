@@ -34,12 +34,12 @@ export function verify(body, secret) {
 
 /**
  * Generate a unique job ID.
- * Format: job_ + timestamp_ms (base36) + random (base36)
+ * Format: job_ + timestamp_ms (base36) + cryptographically random suffix (base36)
  * Sortable, URL-safe, no external deps.
  */
 export function generateJobId() {
   const ts = Date.now().toString(36);
-  const rand = Math.random().toString(36).slice(2, 10);
+  const rand = crypto.randomBytes(6).toString('hex');
   return `job_${ts}${rand}`;
 }
 
@@ -55,6 +55,7 @@ export function validateOffer(offer) {
   if (!offer.ajp)          errors.push('missing: ajp');
   if (!offer.job_id)       errors.push('missing: job_id');
   if (!offer.from?.type)   errors.push('missing: from.type');
+  else if (!['human', 'agent', 'orchestrator'].includes(offer.from.type)) errors.push('from.type must be human, agent, or orchestrator');
   if (!offer.to?.provenance_id) errors.push('missing: to.provenance_id');
   if (!offer.task?.type)   errors.push('missing: task.type');
   if (!offer.task?.instruction) errors.push('missing: task.instruction');

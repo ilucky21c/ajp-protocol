@@ -155,7 +155,9 @@ export class AJPClient {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ received: true }),
-        }).catch(() => {});
+        }).catch((e) => {
+          console.warn(`[AJP] Ack failed for ${jobId} — payment settlement may not trigger:`, e.message);
+        });
         return status;
       }
 
@@ -182,8 +184,11 @@ export class AJPClient {
       const endpoint = profile.provenance_yml?.ajp?.endpoint;
       if (endpoint) return endpoint.replace(/\/$/, '');
 
-      // Fallback: derive from agent URL
-      if (profile.url) return `${profile.url.replace(/\/$/, '')}/api/agent`;
+      // Fallback: derive from agent URL — unreliable, agent should declare ajp.endpoint in PROVENANCE.yml
+      if (profile.url) {
+        console.warn(`[AJP] No ajp.endpoint declared for ${provenanceId} — falling back to ${profile.url}/api/agent. Add ajp.endpoint to PROVENANCE.yml for reliability.`);
+        return `${profile.url.replace(/\/$/, '')}/api/agent`;
+      }
 
       throw new Error(`No AJP endpoint found for ${provenanceId}`);
     } catch (e) {
