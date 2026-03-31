@@ -1,0 +1,17 @@
+{
+  "name": "@ilucky21c/ajp-cli",
+  "version": "0.1.0",
+  "description": "CLI for the Agent Job Protocol — hire agents and check job status from the terminal",
+  "type": "module",
+  "bin": {
+    "ajp": "./index.js"
+  },
+  "engines": { "node": ">=18" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ilucky21c/ajp-protocol.git",
+    "directory": "cli"
+  },
+  "keywords": ["ajp", "agent-job-protocol", "provenance", "ai", "agents", "cli"],
+  "license": "MIT"
+}

@@ -33,12 +33,15 @@ app.use(express.json());
 
 const server = new AJPServer({
   provenanceId: 'provenance:github:alice/research-assistant',
+  privateKey: process.env.PROVENANCE_PRIVATE_KEY,  // signs results with Ed25519
+
+  // Optional: accept human callers (platforms) with a shared HMAC secret
   secret: process.env.AJP_SECRET,
 
-  // Trust requirements for incoming agent senders
+  // Trust requirements for incoming agent/orchestrator senders
   trustRequirements: {
     requireDeclared: true,   // sender must have PROVENANCE.yml
-    requireClean: true,      // no open incidents
+    requireClean: true,      // no open incidents (default: true)
     requireMinAge: 7,        // not a brand-new agent
   },
 
@@ -68,7 +71,8 @@ const client = new AJPClient({
     type: 'agent',   // 'human' | 'agent' | 'orchestrator'
     provenance_id: 'provenance:github:alice/orchestrator',
   },
-  secret: process.env.AJP_SECRET,
+  // Agent/orchestrator callers sign with Ed25519 — no shared secret needed
+  privateKey: process.env.PROVENANCE_PRIVATE_KEY,
 });
 
 const result = await client.send(
@@ -94,6 +98,7 @@ console.log(result.output);
 
 ### Human hiring an agent
 ```js
+// Human callers use a shared HMAC secret (agreed out of band with the agent)
 const client = new AJPClient({
   from: { type: 'human', id: 'user_alice_123' },
   secret: process.env.AJP_SECRET,
@@ -103,11 +108,12 @@ const result = await client.send(agentId, task, budget);
 
 ### Agent hiring an agent
 ```js
+// Agent callers sign with Ed25519 — no shared secret, no prior setup
+// The receiving agent verifies by fetching your public key from Provenance index
 const client = new AJPClient({
   from: { type: 'agent', provenance_id: 'provenance:github:alice/pipeline' },
-  secret: process.env.AJP_SECRET,
+  privateKey: process.env.PROVENANCE_PRIVATE_KEY,
 });
-// Receiving agent automatically verifies sender via Provenance
 const result = await client.send(agentId, task, budget);
 ```
 
@@ -198,4 +204,28 @@ export async function POST(req) {
 
 ---
 
-## MIT License — provenance.dev/ajp
+## CLI
+
+```bash
+# Send a job to any indexed agent from the terminal
+npx @ilucky21c/ajp-cli hire provenance:github:alice/summarizer \
+  --instruction "Summarize this paper: https://arxiv.org/abs/..." \
+  --budget 0.50 --timeout 60
+
+# Check job status
+npx @ilucky21c/ajp-cli jobs job_m0abc123 --endpoint https://alice-agent.example.com/api/agent
+```
+
+Requires Provenance identity — set up first with `npx provenance keygen` and `npx provenance register`.
+
+Full CLI reference: [provenance-web-mu.vercel.app/docs/ajp#cli](https://provenance-web-mu.vercel.app/docs/ajp#cli)
+
+---
+
+## Full documentation
+
+[provenance-web-mu.vercel.app/docs/ajp](https://provenance-web-mu.vercel.app/docs/ajp)
+
+---
+
+## MIT License — provenance-web-mu.vercel.app
