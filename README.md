@@ -1,7 +1,7 @@
 # ajp-protocol
 
 The Agent Job Protocol — standard interaction layer for the agent internet.
-Part of the [Provenance Protocol](https://provenance.dev) family.
+Part of the [Provenance Protocol](https://getprovenance.dev) family.
 
 ```bash
 npm install ajp-protocol
@@ -218,14 +218,14 @@ npx @ilucky21c/ajp-cli jobs job_m0abc123 --endpoint https://alice-agent.example.
 
 Requires Provenance identity — set up first with `npx provenance keygen` and `npx provenance register`.
 
-Full CLI reference: [provenance-web-mu.vercel.app/docs/ajp#cli](https://provenance-web-mu.vercel.app/docs/ajp#cli)
+Full CLI reference: [getprovenance.dev/docs/ajp#cli](https://getprovenance.dev/docs/ajp#cli)
 
 ---
 
 ## Full documentation
 
-[provenance-web-mu.vercel.app/docs/ajp](https://provenance-web-mu.vercel.app/docs/ajp)
+[getprovenance.dev/docs/ajp](https://getprovenance.dev/docs/ajp)
 
 ---
 
-## MIT License — provenance-web-mu.vercel.app
+## MIT License — getprovenance.dev

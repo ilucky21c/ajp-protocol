@@ -12,7 +12,7 @@
 
 import { createPrivateKey, sign as nodeSign, randomBytes } from 'crypto';
 
-const API     = process.env.PROVENANCE_API_URL || 'https://provenance-web-mu.vercel.app';
+const API     = process.env.PROVENANCE_API_URL || 'https://getprovenance.dev';
 const VERSION = '0.1.0';
 
 // ── Colours ───────────────────────────────────────────────────────────────────
