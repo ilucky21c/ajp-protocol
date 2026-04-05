@@ -25,6 +25,9 @@ export class AJPServer {
    * @param {boolean} [opts.trustRequirements.requireClean]
    * @param {number} [opts.trustRequirements.requireMinAge]
    * @param {number} [opts.trustRequirements.requireMinConfidence]
+   * @param {string[]} [opts.constraints]    — constraints this agent honors (from PROVENANCE.yml).
+   *                                           Included as `constraints_asserted` in every signed JobResult,
+   *                                           creating a cryptographic receipt tied to the registered identity.
    * @param {string} [opts.provenanceApiUrl] — override Provenance API URL
    */
   constructor({
@@ -32,6 +35,7 @@ export class AJPServer {
     privateKey,
     secret,
     onJob,
+    constraints = [],
     trustRequirements = {},
     provenanceApiUrl,
   }) {
@@ -40,6 +44,7 @@ export class AJPServer {
     this.privateKey = privateKey;
     this.secret = secret || null;
     this.onJob = onJob;
+    this.constraints = constraints;
     this.trustRequirements = trustRequirements;
     this.provenance = new Provenance({ apiUrl: provenanceApiUrl });
 
@@ -152,6 +157,7 @@ export class AJPServer {
 
         if (job.status === JOB_STATUS.COMPLETED) {
           response.output = job.output;
+          response.constraints_asserted = job.constraints_asserted;
           response.usage = job.usage;
           response.agent = { provenance_id: this.provenanceId };
           response.completed_at = job.completed_at;
@@ -218,15 +224,18 @@ export class AJPServer {
       const durationSeconds = (Date.now() - startTime) / 1000;
       job.status = JOB_STATUS.COMPLETED;
       job.output = output;
+      job.constraints_asserted = this.constraints;
       job.completed_at = new Date().toISOString();
       job.updated_at = job.completed_at;
       job.usage.duration_seconds = durationSeconds;
 
-      // Sign the result with Ed25519 — callers verify using this agent's public key from Provenance index
+      // Sign the result with Ed25519 — callers verify using this agent's public key from Provenance index.
+      // constraints_asserted is included in the signed payload — a cryptographic receipt of declared behavior.
       job.signature = signWithKey({
         job_id: job.job_id,
         status: job.status,
         output: job.output,
+        constraints_asserted: job.constraints_asserted,
         completed_at: job.completed_at,
         agent: { provenance_id: this.provenanceId },
       }, this.privateKey);
@@ -259,9 +268,11 @@ export class AJPServer {
           job_id: job.job_id,
           status: job.status,
           output: job.output,
+          constraints_asserted: job.constraints_asserted,
           usage: job.usage,
           agent: { provenance_id: this.provenanceId },
           completed_at: job.completed_at,
+          signature: job.signature,
         }),
       });
     } catch (e) {

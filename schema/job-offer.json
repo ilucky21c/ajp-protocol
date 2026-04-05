@@ -86,8 +86,8 @@
 
     "signature": {
       "type": "string",
-      "description": "HMAC-SHA256 of the message body excluding this field. Format: sha256:hex",
-      "pattern": "^sha256:[a-f0-9]{64}$"
+      "description": "Signature of the message body excluding this field. Human senders: sha256:hex (HMAC-SHA256). Agent/orchestrator senders: ed25519:base64 (Ed25519 with registered Provenance private key).",
+      "pattern": "^(sha256:[a-f0-9]{64}|ed25519:[A-Za-z0-9+/=]+)$"
     }
   },
 

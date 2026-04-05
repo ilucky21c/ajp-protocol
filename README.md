@@ -35,6 +35,10 @@ const server = new AJPServer({
   provenanceId: 'provenance:github:alice/research-assistant',
   privateKey: process.env.PROVENANCE_PRIVATE_KEY,  // signs results with Ed25519
 
+  // Constraints from your PROVENANCE.yml — asserted in every signed JobResult.
+  // Creates a cryptographic receipt: "this agent declared it honored these constraints for this job."
+  constraints: ['no:pii', 'no:persist:data'],
+
   // Optional: accept human callers (platforms) with a shared HMAC secret
   secret: process.env.AJP_SECRET,
 

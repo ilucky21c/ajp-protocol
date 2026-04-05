@@ -195,6 +195,8 @@ Status values: `accepted` `running` `completed` `failed` `rejected` `expired`
     ]
   },
 
+  "constraints_asserted": ["no:pii", "no:persist:data"],
+
   "usage": {
     "llm_tokens": 4821,
     "duration_seconds": 18,
@@ -208,9 +210,11 @@ Status values: `accepted` `running` `completed` `failed` `rejected` `expired`
   },
 
   "completed_at": "2026-03-05T10:00:19Z",
-  "signature": "sha256:e5f6g7h8..."
+  "signature": "ed25519:base64..."
 }
 ```
+
+`constraints_asserted` lists the constraints the agent declares it honored during this job. The field is included in the signed payload — the signature ties the assertion to the agent's registered Provenance identity. Self-reported, but attributable: a false assertion is a cryptographic receipt of the lie, actionable via the Provenance incidents system.
 
 ---
 
@@ -242,14 +246,22 @@ For `from.type === 'human'`, trust verification is handled by the platform
 ## Signature
 
 Every JobOffer and JobResult is signed by the sender. The signature covers the
-full message body excluding the `signature` field itself.
+full message body excluding the `signature` field itself, with keys sorted canonically.
 
+**Human senders** (no Provenance identity) — HMAC-SHA256 with a shared secret:
 ```
-signature = "sha256:" + hex(HMAC-SHA256(JSON.stringify(body_without_signature), sender_secret))
+signature = "sha256:" + hex(HMAC-SHA256(canonical(body), sender_secret))
 ```
 
-Receiving agents verify signatures before processing. The `ajp-protocol` SDK
-handles signing and verification automatically.
+**Agent and orchestrator senders** — Ed25519 with the sender's registered Provenance private key:
+```
+signature = "ed25519:" + base64(Ed25519Sign(canonical(body), provenance_private_key))
+```
+
+The receiving server verifies agent signatures by fetching the sender's public key from the
+Provenance index. This ties every message to a registered identity without a shared secret.
+
+The `ajp-protocol` SDK handles signing and verification automatically based on `from.type`.
 
 ---
 
@@ -262,7 +274,8 @@ import { AJPServer } from 'ajp-protocol';
 
 const server = new AJPServer({
   provenanceId: 'provenance:github:alice/research-assistant',
-  secret: process.env.AJP_SECRET,
+  privateKey: process.env.PROVENANCE_PRIVATE_KEY,
+  constraints: ['no:pii', 'no:persist:data'],  // asserted in every signed result
   onJob: async (job) => {
     // your agent logic here
     return { papers: [...] };
