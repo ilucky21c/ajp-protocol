@@ -22,9 +22,9 @@ export class AJPServer {
    * @param {object} [opts.trustRequirements] — applied to all agent/orchestrator senders
    * @param {boolean} [opts.trustRequirements.requireDeclared]
    * @param {string[]} [opts.trustRequirements.requireConstraints]
+   * @param {string[]} [opts.trustRequirements.requireCapabilities] — e.g. ['delegate:agents'] to only accept jobs from declared orchestrators
    * @param {boolean} [opts.trustRequirements.requireClean]
    * @param {number} [opts.trustRequirements.requireMinAge]
-   * @param {number} [opts.trustRequirements.requireMinConfidence]
    * @param {string[]} [opts.constraints]    — constraints this agent honors (from PROVENANCE.yml).
    *                                           Included as `constraints_asserted` in every signed JobResult,
    *                                           creating a cryptographic receipt tied to the registered identity.
@@ -95,9 +95,9 @@ export class AJPServer {
             {
               requireDeclared: this.trustRequirements.requireDeclared ?? false,
               requireConstraints: this.trustRequirements.requireConstraints ?? [],
+              requireCapabilities: this.trustRequirements.requireCapabilities ?? [],
               requireClean: this.trustRequirements.requireClean ?? true,
               requireMinAge: this.trustRequirements.requireMinAge ?? 0,
-              requireMinConfidence: this.trustRequirements.requireMinConfidence ?? 0,
             }
           );
 

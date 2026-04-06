@@ -44,9 +44,10 @@ const server = new AJPServer({
 
   // Trust requirements for incoming agent/orchestrator senders
   trustRequirements: {
-    requireDeclared: true,   // sender must have PROVENANCE.yml
-    requireClean: true,      // no open incidents (default: true)
-    requireMinAge: 7,        // not a brand-new agent
+    requireDeclared: true,                        // sender must have PROVENANCE.yml
+    requireCapabilities: ['delegate:agents'],      // sender must be a declared orchestrator
+    requireClean: true,                           // no open incidents (default: true)
+    requireMinAge: 7,                             // not a brand-new agent
   },
 
   // Your agent logic — receives the job, returns the result

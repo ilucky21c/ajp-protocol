@@ -228,9 +228,10 @@ import { provenance } from 'provenance-protocol';
 
 const result = await provenance.gate(offer.from.provenance_id, {
   requireDeclared: true,
-  requireConstraints: [],        // add what your agent requires
+  requireCapabilities: ['delegate:agents'], // sender must be a declared orchestrator
+  requireConstraints: [],                   // add constraints your agent requires
   requireClean: true,
-  requireMinAge: 7,              // don't accept jobs from brand-new agents
+  requireMinAge: 7,                         // don't accept jobs from brand-new agents
 });
 
 if (!result.allowed) {
