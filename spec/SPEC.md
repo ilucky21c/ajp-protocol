@@ -335,6 +335,19 @@ can discover an agent's AJP endpoint without out-of-band communication.
 
 ---
 
+## Implementing this specification
+
+This specification and its JSON Schema are published under the MIT Licence.
+You may implement them in any language, for any purpose, commercial or
+otherwise, without permission, notification or fee.
+
+AJP describes messages exchanged directly between agents. Nothing in it
+requires contacting any particular service. Trust verification is a separate
+concern, defined by the [Provenance Protocol](https://github.com/ilucky21c/provenance-protocol);
+an AJP implementation may use any verifier, or none.
+
+---
+
 ## Versioning
 
 The `ajp` field in every message declares the spec version. `0.1` is the current
@@ -344,4 +357,4 @@ version. Future versions add fields, never remove them.
 
 *AJP v0.1 — Provenance Protocol Family — MIT License*
 *https://getprovenance.dev/ajp*
-*https://github.com/provenance-protocol/ajp*
+*https://github.com/ilucky21c/ajp-protocol*
