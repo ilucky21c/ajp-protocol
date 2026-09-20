@@ -221,7 +221,7 @@ npx @ilucky21c/ajp-cli hire provenance:github:alice/summarizer \
 npx @ilucky21c/ajp-cli jobs job_m0abc123 --endpoint https://alice-agent.example.com/api/agent
 ```
 
-Requires Provenance identity — set up first with `npx provenance keygen` and `npx provenance register`.
+Requires Provenance identity — set up first with `npx provenance-protocol keygen` and `npx provenance-protocol register`.
 
 Full CLI reference: [getprovenance.dev/docs/ajp#cli](https://getprovenance.dev/docs/ajp#cli)
 

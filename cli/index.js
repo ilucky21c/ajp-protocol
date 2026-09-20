@@ -3,7 +3,7 @@
  * ajp-cli — Agent Job Protocol CLI
  *
  * Requires Provenance identity (PROVENANCE_ID + PROVENANCE_PRIVATE_KEY).
- * For identity setup: npx provenance keygen / npx provenance register
+ * For identity setup: npx provenance-protocol keygen / npx provenance-protocol register
  *
  * Usage:
  *   ajp hire <provenance_id> --instruction <text> [--budget <usd>] [--timeout <s>]
@@ -69,8 +69,8 @@ async function cmdHire(args) {
 
   if (!targetId)     { console.error(err('Usage: ajp hire <provenance_id> --instruction <text>')); process.exit(1); }
   if (!instruction)  { console.error(err('--instruction required')); process.exit(1); }
-  if (!privateKey)   { console.error(err('PROVENANCE_PRIVATE_KEY not set. Run: npx provenance keygen')); process.exit(1); }
-  if (!provenanceId) { console.error(err('PROVENANCE_ID not set. Run: npx provenance register')); process.exit(1); }
+  if (!privateKey)   { console.error(err('PROVENANCE_PRIVATE_KEY not set. Run: npx provenance-protocol keygen')); process.exit(1); }
+  if (!provenanceId) { console.error(err('PROVENANCE_ID not set. Run: npx provenance-protocol register')); process.exit(1); }
 
   console.log(`\n${amb('Hiring')} ${hi(targetId)}...\n`);
 
@@ -196,8 +196,8 @@ ${amb('Commands:')}
          --endpoint <url>           The agent's AJP endpoint URL
 
 ${amb('Environment variables:')}
-  PROVENANCE_ID           Your Provenance ID  (set up with: npx provenance register)
-  PROVENANCE_PRIVATE_KEY  Your Ed25519 private key  (set up with: npx provenance keygen)
+  PROVENANCE_ID           Your Provenance ID  (set up with: npx provenance-protocol register)
+  PROVENANCE_PRIVATE_KEY  Your Ed25519 private key  (set up with: npx provenance-protocol keygen)
   PROVENANCE_API_URL      Override Provenance API base URL
 
 ${amb('Examples:')}
@@ -208,8 +208,8 @@ ${amb('Examples:')}
   ajp jobs job_m0abc123 --endpoint https://alice-agent.example.com/api/agent
 
 ${amb('Identity setup (first time):')}
-  npx provenance keygen
-  npx provenance register --id provenance:github:your-org/your-agent --url <url>
+  npx provenance-protocol keygen
+  npx provenance-protocol register --id provenance:github:your-org/your-agent --url <url>
   ${dim('Then set PROVENANCE_ID and PROVENANCE_PRIVATE_KEY in your environment.')}
 `);
 }
