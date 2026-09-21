@@ -121,7 +121,8 @@ Confirm result received. Triggers payment settlement if applicable.
   "from": {
     "type": "human",
     "id": "user_abc123",
-    "provenance_id": null
+    "provenance_id": null,
+    "declaration_url": null
   },
 
   "to": {
@@ -158,6 +159,13 @@ Confirm result received. Triggers payment settlement if applicable.
   "signature": "sha256:a1b2c3d4..."
 }
 ```
+
+`from.declaration_url` is where the sender's signed declaration is published.
+Agent and orchestrator senders SHOULD provide it: it is what lets a receiver
+establish the sender's key offline rather than trusting a third-party index.
+`null` for human senders, whose identity is carried by the platform's signature.
+
+---
 
 ### JobStatus
 
@@ -220,27 +228,71 @@ Status values: `accepted` `running` `completed` `failed` `rejected` `expired`
 
 ## Trust verification
 
-When `from.type` is `agent`, the receiving agent MUST run a trust check before
-accepting the job. Using the `provenance-protocol` SDK:
+Establishing whether to accept a job from another agent splits into two
+questions, and only one of them needs a network service.
+
+### 1. Identity — MUST, and offline
+
+*Is this signature really from the party named in `from`?*
+
+The sender publishes its signed declaration and points at it with
+`from.declaration_url`. The receiver fetches that file and verifies it locally:
 
 ```js
-import { provenance } from 'provenance-protocol';
+import { verifyDeclaration } from 'provenance-protocol/verify';
 
-const result = await provenance.gate(offer.from.provenance_id, {
-  requireDeclared: true,
-  requireCapabilities: ['delegate:agents'], // sender must be a declared orchestrator
-  requireConstraints: [],                   // add constraints your agent requires
-  requireClean: true,
-  requireMinAge: 7,                         // don't accept jobs from brand-new agents
-});
-
-if (!result.allowed) {
-  return res.status(403).json({ error: 'Trust check failed', reason: result.reason });
-}
+const result = await verifyDeclaration(declaration, { retrievedFrom: declarationUrl });
+// result.valid       — signature checks against the key inside the file
+// result.location    — the file was served from the location its id names
+// result.fingerprint — the key's fingerprint, for rotation detection
 ```
 
-For `from.type === 'human'`, trust verification is handled by the platform
-(ClawMarket, SkillsMP, etc.) before the JobOffer is issued.
+A receiver MUST reject the offer unless the declaration verifies, the retrieval
+location matches the `provenance_id` it claims, and that id equals
+`from.provenance_id`. The sender's public key is then taken from the declaration
+and used to check the offer's signature.
+
+No index is consulted. Re-hosting a genuine declaration elsewhere fails the
+location check, and forging one requires the genuine private key.
+
+Receivers SHOULD remember the key fingerprint they saw for a `provenance_id`. A
+later offer signed by a different key is a key rotation and MUST be treated as
+a material change rather than a routine update.
+
+An earlier version of this specification obtained the sender's public key from a
+single index, which made signature verification depend on one service being
+reachable. That is no longer permitted for identity.
+
+### 2. Standing — SHOULD, online, and the receiver's choice
+
+*Is that party currently in good order?* Revoked, open incidents, stale
+evidence. This cannot be answered offline: the absence of news cannot be
+carried in a document, so somebody has to be asked.
+
+**Which attester to ask is the receiver's decision, not this protocol's.** One
+index, several, a private attester, or none. A conformant implementation MUST
+NOT hardcode a single provider.
+
+```js
+import { AJPServer, declarationKeyResolver, indexStandingCheck } from 'ajp-protocol';
+import { Provenance } from 'provenance-protocol';
+
+const server = new AJPServer({
+  provenanceId, onJob,
+  resolveSenderKey: declarationKeyResolver(),          // offline, the default
+  checkStanding: indexStandingCheck(new Provenance(), // opt-in, swappable
+    { requireConstraints: ['no:pii'], requireClean: true, requireMinAge: 7 }),
+  onStandingUnavailable: 'deny',
+});
+```
+
+A receiver that performs a standing check MUST distinguish *checked and failed*
+from *could not check*, and MUST state which way it fails when the check is
+unavailable. Reporting an unreachable attester as a failed trust check turns
+someone else's downtime into an accusation against the sender.
+
+For `from.type === 'human'`, identity is established by the platform issuing the
+offer, and the shared-secret signature covers it.
 
 ---
 

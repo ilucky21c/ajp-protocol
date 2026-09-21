@@ -16,6 +16,10 @@ export class AJPClient {
    * @param {string} opts.from.type          — 'human' | 'agent' | 'orchestrator'
    * @param {string} [opts.from.id]          — platform user ID (human only)
    * @param {string} [opts.from.provenance_id] — required for agent/orchestrator
+   * @param {string} [opts.from.declaration_url] — where this sender's signed
+   *        declaration is published. Lets receivers establish this sender's key
+   *        offline instead of looking it up in an index. Strongly recommended:
+   *        without it a receiver must fall back to trusting a third party.
    * @param {string} [opts.privateKey]       — Base64 PKCS8 Ed25519 private key (PROVENANCE_PRIVATE_KEY).
    *                                           Required for agent/orchestrator senders. Allows any
    *                                           indexed agent to call any other without a shared secret.
@@ -72,6 +76,7 @@ export class AJPClient {
         type: this.from.type,
         id: this.from.id || null,
         provenance_id: this.from.provenance_id || null,
+        declaration_url: this.from.declaration_url || null,
       },
 
       to: { provenance_id: toProvenanceId },

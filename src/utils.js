@@ -94,6 +94,7 @@ export function generateJobId() {
  */
 export function validateOffer(offer) {
   const errors = [];
+  const warnings = [];
 
   if (!offer.ajp)          errors.push('missing: ajp');
   if (!offer.job_id)       errors.push('missing: job_id');
@@ -109,6 +110,13 @@ export function validateOffer(offer) {
 
   if (offer.from?.type === 'agent' || offer.from?.type === 'orchestrator') {
     if (!offer.from.provenance_id) errors.push('from.provenance_id required when type is agent/orchestrator');
+    // declaration_url is optional on purpose — a receiver configured with an
+    // index resolver does not need it. But without it, that receiver cannot
+    // establish this sender's key without consulting a third party, so the
+    // offer may be refused. Surfaced as a warning, never a validation failure.
+    if (!offer.from.declaration_url) {
+      warnings.push('from.declaration_url absent — receivers cannot verify this sender offline and may refuse the offer');
+    }
   }
 
   // Check expiry
@@ -116,7 +124,7 @@ export function validateOffer(offer) {
     errors.push('offer has expired');
   }
 
-  return { valid: errors.length === 0, errors };
+  return { valid: errors.length === 0, errors, warnings };
 }
 
 // ── Status helpers ────────────────────────────────────────────────────────

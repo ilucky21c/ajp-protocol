@@ -22,3 +22,10 @@
 export { AJPClient } from './client.js';
 export { AJPServer } from './server.js';
 export { sign, verify, generateJobId, validateOffer, JOB_STATUS, FROM_TYPE } from './utils.js';
+export {
+  declarationKeyResolver,
+  indexKeyResolver,
+  firstResolver,
+  indexStandingCheck,
+  SenderIdentityError,
+} from './trust.js';

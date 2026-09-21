@@ -8,6 +8,7 @@
 
 import { verify, verifyWithKey, sign, signWithKey, validateOffer, JOB_STATUS, FROM_TYPE } from './utils.js';
 import { Provenance } from 'provenance-protocol';
+import { declarationKeyResolver, SenderIdentityError } from './trust.js';
 
 export class AJPServer {
 
@@ -19,6 +20,14 @@ export class AJPServer {
    * @param {string} [opts.secret]           — HMAC secret for verifying human callers. Optional if you
    *                                           only accept agent/orchestrator callers.
    * @param {Function} opts.onJob            — async (job) => result — your agent logic
+   * @param {function} [opts.resolveSenderKey] — async (provenanceId, from) => { publicKey, fingerprint }
+   *        How the sender's key is established. Defaults to resolving it from the
+   *        sender's own signed declaration, offline, with no index involved.
+   * @param {function} [opts.checkStanding] — async (provenanceId) => { allowed, reason }
+   *        Optional current-standing check (revocation, incidents, freshness).
+   *        Off by default: standing is the receiver's policy, not a protocol rule.
+   * @param {'deny'|'allow'} [opts.onStandingUnavailable] — what to do when the
+   *        standing check itself fails to answer. Defaults to 'deny'.
    * @param {object} [opts.trustRequirements] — applied to all agent/orchestrator senders
    * @param {boolean} [opts.trustRequirements.requireDeclared]
    * @param {string[]} [opts.trustRequirements.requireConstraints]
@@ -38,6 +47,9 @@ export class AJPServer {
     constraints = [],
     trustRequirements = {},
     provenanceApiUrl,
+    resolveSenderKey,
+    checkStanding,
+    onStandingUnavailable = 'deny',
   }) {
     if (!privateKey) throw new Error('privateKey (PROVENANCE_PRIVATE_KEY) required — used to sign job results');
     this.provenanceId = provenanceId;
@@ -47,6 +59,11 @@ export class AJPServer {
     this.constraints = constraints;
     this.trustRequirements = trustRequirements;
     this.provenance = new Provenance({ apiUrl: provenanceApiUrl });
+    // Identity resolution never touches an index by default: a signature check
+    // that depends on someone's web service being up is not a signature check.
+    this.resolveSenderKey = resolveSenderKey ?? declarationKeyResolver();
+    this.checkStanding = checkStanding ?? null;
+    this.onStandingUnavailable = onStandingUnavailable;
 
     // In-memory job store — replace with DB for production
     this.jobs = new Map();
@@ -75,37 +92,50 @@ export class AJPServer {
             return this._json(res, 401, { error: 'Invalid signature' });
           }
         } else {
-          // Agent/orchestrator callers: Ed25519 — fetch public key from Provenance index
-          const senderProfile = await this.provenance.check(offer.from.provenance_id).catch(() => null);
-          if (!senderProfile?.found) {
-            return this._json(res, 403, { error: 'Sender not found in Provenance index' });
+          // Agent/orchestrator callers: Ed25519. The key comes from whatever the
+          // receiver configured — by default the sender's own signed declaration,
+          // verified offline. No index is consulted to check a signature.
+          let sender;
+          try {
+            sender = await this.resolveSenderKey(offer.from.provenance_id, offer.from);
+          } catch (e) {
+            const code = e instanceof SenderIdentityError ? e.code : 'SENDER_IDENTITY_FAILED';
+            return this._json(res, 403, { error: 'Sender identity could not be established', reason: e.message, code });
           }
-          if (!senderProfile.public_key) {
-            return this._json(res, 403, { error: 'Sender has no public key registered — cannot verify identity' });
+          if (!sender?.publicKey) {
+            return this._json(res, 403, { error: 'Sender identity could not be established', reason: 'No public key resolved' });
           }
-          if (!verifyWithKey(offer, senderProfile.public_key)) {
+          if (!verifyWithKey(offer, sender.publicKey)) {
             return this._json(res, 401, { error: 'Invalid signature' });
           }
         }
 
-        // 3. Trust check — required for agent/orchestrator senders
-        if (offer.from.type === FROM_TYPE.AGENT || offer.from.type === FROM_TYPE.ORCHESTRATOR) {
-          const trustResult = await this.provenance.gate(
-            offer.from.provenance_id,
-            {
-              requireDeclared: this.trustRequirements.requireDeclared ?? false,
-              requireConstraints: this.trustRequirements.requireConstraints ?? [],
-              requireCapabilities: this.trustRequirements.requireCapabilities ?? [],
-              requireClean: this.trustRequirements.requireClean ?? true,
-              requireMinAge: this.trustRequirements.requireMinAge ?? 0,
+        // 3. Standing check — optional, and the receiver's policy rather than a
+        //    protocol requirement. Identity is settled above without a network
+        //    service; standing is the part that genuinely needs asking someone,
+        //    so it is configured, degradable, and absent by default.
+        if (
+          this.checkStanding &&
+          (offer.from.type === FROM_TYPE.AGENT || offer.from.type === FROM_TYPE.ORCHESTRATOR)
+        ) {
+          let standing;
+          try {
+            standing = await this.checkStanding(offer.from.provenance_id, this.trustRequirements);
+          } catch (e) {
+            // "Could not check" must not be reported as "checked and failed".
+            if (this.onStandingUnavailable === 'allow') {
+              standing = { allowed: true, unavailable: true, reason: e.message };
+            } else {
+              return this._json(res, 403, {
+                error: 'Standing could not be checked',
+                reason: e.message,
+                code: 'STANDING_UNAVAILABLE',
+              });
             }
-          );
+          }
 
-          if (!trustResult.allowed) {
-            return this._json(res, 403, {
-              error: 'Trust check failed',
-              reason: trustResult.reason,
-            });
+          if (standing && standing.allowed === false) {
+            return this._json(res, 403, { error: 'Trust check failed', reason: standing.reason ?? null });
           }
         }
 

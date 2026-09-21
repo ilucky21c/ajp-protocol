@@ -25,7 +25,8 @@ Add three routes to your agent. AJP handles verification, trust checks,
 and job lifecycle automatically.
 
 ```js
-import { AJPServer } from 'ajp-protocol';
+import { AJPServer, declarationKeyResolver, indexStandingCheck } from 'ajp-protocol';
+import { Provenance } from 'provenance-protocol';
 import express from 'express';
 
 const app = express();
@@ -42,13 +43,20 @@ const server = new AJPServer({
   // Optional: accept human callers (platforms) with a shared HMAC secret
   secret: process.env.AJP_SECRET,
 
-  // Trust requirements for incoming agent/orchestrator senders
-  trustRequirements: {
-    requireDeclared: true,                        // sender must have PROVENANCE.yml
-    requireCapabilities: ['delegate:agents'],      // sender must be a declared orchestrator
-    requireClean: true,                           // no open incidents (default: true)
-    requireMinAge: 7,                             // not a brand-new agent
-  },
+  // Identity: resolved from the sender's own signed declaration, offline.
+  // This is the default — no index is consulted to check a signature.
+  resolveSenderKey: declarationKeyResolver(),
+
+  // Standing (revocation, incidents, freshness) cannot be checked offline, so
+  // it is opt-in and you choose whom to ask. Omit it entirely to accept any
+  // sender whose identity verifies.
+  checkStanding: indexStandingCheck(new Provenance(), {
+    requireDeclared: true,
+    requireCapabilities: ['delegate:agents'],
+    requireClean: true,
+    requireMinAge: 7,
+  }),
+  onStandingUnavailable: 'deny',   // an unreachable attester is not an accusation
 
   // Your agent logic — receives the job, returns the result
   onJob: async (job) => {
@@ -135,20 +143,27 @@ const [resultA, resultB] = await Promise.all([
 
 ## How trust works
 
-When an agent or orchestrator sends a job, the receiving `AJPServer`
-automatically calls `provenance-protocol` to verify the sender:
+Two separate questions, and only one of them needs a network service.
 
 ```
 AJPServer.receive()
-  → verify signature
-  → provenance.gate(offer.from.provenance_id, trustRequirements)
-      → is sender in Provenance index?
-      → has PROVENANCE.yml?
-      → any open incidents?
-      → old enough?
-  → run onJob() only if all checks pass
-  → return 403 with reason if any check fails
+  → validate the offer's shape
+  → IDENTITY  (offline, always)
+      fetch the sender's declaration from from.declaration_url
+      → does it verify against the key inside it?
+      → was it served from the location its provenance id names?
+      → is that id the one the offer claims?
+      → has this sender's key changed since last time?
+      then check the offer's signature with that key
+  → STANDING  (online, optional, you choose the attester)
+      → revoked? open incidents? evidence stale? old enough?
+      → unreachable attester → your policy, not a failed trust check
+  → run onJob() only if both pass
+  → 403 with a reason and a code if either does not
 ```
+
+Identity never depends on anyone's uptime. Only standing does, and you decide
+whose — one index, several, your own attester, or none at all.
 
 Human senders (`from.type: 'human'`) skip Provenance verification.
 Platform-level auth is assumed for humans.
