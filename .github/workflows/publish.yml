@@ -45,3 +45,22 @@ jobs:
       # this repository and this workflow filename. Provenance attestations are
       # generated automatically, so --provenance is not passed.
       - run: npm publish --access public
+
+      # The CLI is a second package in this repo with its own version. Publish it
+      # from the same tag, but only when its version is actually new — otherwise
+      # every release after an unchanged CLI would fail on "cannot publish over
+      # the previously published version".
+      #
+      # A skip and a publish must not look alike in the log: one means "nothing
+      # to do", the other means "shipped".
+      - name: Publish the CLI if its version is new
+        working-directory: cli
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "::notice::$NAME@$VERSION is already published — skipping. Bump cli/package.json to release it."
+          else
+            echo "Publishing $NAME@$VERSION"
+            npm publish --access public
+          fi
