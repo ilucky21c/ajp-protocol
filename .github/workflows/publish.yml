@@ -44,7 +44,20 @@ jobs:
       # publish rights, configured as a trusted publisher on npmjs.com against
       # this repository and this workflow filename. Provenance attestations are
       # generated automatically, so --provenance is not passed.
-      - run: npm publish --access public
+      # Skip rather than fail when this version is already on npm. A tag may
+      # exist to release a sibling package in this repo, and a red run that
+      # actually means "nothing to publish here" trains people to ignore red
+      # runs. The log says which happened.
+      - name: Publish the protocol package if its version is new
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "::notice::$NAME@$VERSION is already published — skipping. Bump package.json to release it."
+          else
+            echo "Publishing $NAME@$VERSION"
+            npm publish --access public
+          fi
 
       # The CLI is a second package in this repo with its own version. Publish it
       # from the same tag, but only when its version is actually new — otherwise
