@@ -34,9 +34,18 @@ const resolve = declarationKeyResolver({ fetchText });
 const ok1 = await resolve(ALICE, { declaration_url: ALICE_URL });
 t('honest sender resolves offline', ok1.publicKey === alice.publicKey && !!ok1.fingerprint);
 
-// 2. No declaration_url -> refused with a specific code.
-try { await resolve(ALICE, {}); t('missing declaration_url refused', false); }
-catch (e) { t('missing declaration_url refused', e.code === 'NO_DECLARATION_URL', e.code); }
+// 2. No declaration_url and no standard location -> refused with a specific code.
+try { await resolve('provenance:npm:some-agent', {}); t('no declaration_url and no standard location refused', false); }
+catch (e) { t('no declaration_url and no standard location refused', e.code === 'NO_DECLARATION_URL', e.code); }
+
+// 2b. No declaration_url, but the id names a standard location -> that is fetched.
+{
+  const std = 'https://raw.githubusercontent.com/alice/research-agent/HEAD/PROVENANCE.yml';
+  net.set(std, JSON.stringify(aliceDecl));
+  const r = await resolve(ALICE, {});
+  t('falls back to the standard location for its id', r.publicKey === alice.publicKey && r.source === std);
+  net.delete(std);
+}
 
 // 3. Impostor re-hosts Alice's genuine declaration on their own server.
 const EVIL_URL = 'https://evil.example/copied/PROVENANCE.json';

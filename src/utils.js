@@ -4,14 +4,26 @@
  */
 
 import crypto, { createPrivateKey, createPublicKey, sign as nodeSign, verify as nodeVerify } from 'crypto';
+import { canonicalJson } from 'provenance-protocol';
 
 // ── Signing ───────────────────────────────────────────────────────────────
 
 /**
- * Canonical form for signing — sorts keys, excludes `signature` field.
- * Used by both HMAC and Ed25519 paths for consistency.
+ * Canonical form for signing: the whole body except `signature`, with keys
+ * sorted at every depth. Used by both HMAC and Ed25519 paths.
+ *
+ * Before 0.3 this passed the sorted top-level keys to JSON.stringify as a
+ * replacer — which is an allow-list applied at every depth, so every nested
+ * field was dropped from the signed bytes. The task, budget, sender and
+ * recipient were unsigned; a signed offer could be rewritten and still verify.
  */
 function _canonical(body) {
+  const { signature: _, ...rest } = body;
+  return canonicalJson(rest);
+}
+
+// The pre-0.3 form, kept only to recognise it and say so. Never accepted.
+function _legacyCanonical(body) {
   const { signature: _, ...rest } = body;
   return JSON.stringify(rest, Object.keys(rest).sort());
 }
@@ -56,13 +68,34 @@ export function signWithKey(body, privateKeyBase64) {
 }
 
 /**
- * Verify an Ed25519 signature using a public key from the Provenance index.
+ * Verify an Ed25519 signature against the signer's public key.
  *
  * @param {object} body            Message body including signature field
- * @param {string} publicKeyBase64 Base64 SPKI DER public key (from Provenance profile)
+ * @param {string} publicKeyBase64 Base64 SPKI DER public key, from the signer's declaration
  * @returns {boolean}
  */
 export function verifyWithKey(body, publicKeyBase64) {
+  return _verifyEd25519(body, publicKeyBase64, _canonical);
+}
+
+/**
+ * True when a signature that failed verification would have passed under the
+ * pre-0.3 canonical form — i.e. the sender runs an old SDK whose signatures do
+ * not cover the job's contents. For a precise error message only; such a
+ * signature is never accepted.
+ */
+export function isLegacySignature(body, { publicKey, secret } = {}) {
+  try {
+    if (body.signature?.startsWith('ed25519:') && publicKey) return _verifyEd25519(body, publicKey, _legacyCanonical);
+    if (body.signature?.startsWith('sha256:') && secret) {
+      const legacy = `sha256:${crypto.createHmac('sha256', secret).update(_legacyCanonical(body)).digest('hex')}`;
+      return legacy === body.signature;
+    }
+  } catch {}
+  return false;
+}
+
+function _verifyEd25519(body, publicKeyBase64, canonical) {
   if (!body.signature?.startsWith('ed25519:')) return false;
   const publicKey = createPublicKey({
     key: Buffer.from(publicKeyBase64, 'base64'),
@@ -70,7 +103,7 @@ export function verifyWithKey(body, publicKeyBase64) {
     type: 'spki',
   });
   const sigBuffer = Buffer.from(body.signature.slice('ed25519:'.length), 'base64');
-  return nodeVerify(null, Buffer.from(_canonical(body), 'utf8'), publicKey, sigBuffer);
+  return nodeVerify(null, Buffer.from(canonical(body), 'utf8'), publicKey, sigBuffer);
 }
 
 // ── Job ID generation ─────────────────────────────────────────────────────

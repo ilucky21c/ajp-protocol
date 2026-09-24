@@ -6,8 +6,7 @@
  * Express, Next.js API routes, Fastify, or any Node HTTP framework.
  */
 
-import { verify, verifyWithKey, sign, signWithKey, validateOffer, JOB_STATUS, FROM_TYPE } from './utils.js';
-import { Provenance } from 'provenance-protocol';
+import { verify, verifyWithKey, isLegacySignature, sign, signWithKey, validateOffer, JOB_STATUS, FROM_TYPE } from './utils.js';
 import { declarationKeyResolver, SenderIdentityError } from './trust.js';
 
 export class AJPServer {
@@ -37,7 +36,6 @@ export class AJPServer {
    * @param {string[]} [opts.constraints]    — constraints this agent honors (from PROVENANCE.yml).
    *                                           Included as `constraints_asserted` in every signed JobResult,
    *                                           creating a cryptographic receipt tied to the registered identity.
-   * @param {string} [opts.provenanceApiUrl] — override Provenance API URL
    */
   constructor({
     provenanceId,
@@ -46,11 +44,17 @@ export class AJPServer {
     onJob,
     constraints = [],
     trustRequirements = {},
-    provenanceApiUrl,
     resolveSenderKey,
     checkStanding,
     onStandingUnavailable = 'deny',
+    ...rest
   }) {
+    if ('provenanceApiUrl' in rest) {
+      throw new Error(
+        'provenanceApiUrl was removed in ajp-protocol 0.3: sender keys come from their own declarations. ' +
+        'To use an index, pass resolveSenderKey / checkStanding built from new Provenance({ apiUrl }).'
+      );
+    }
     if (!privateKey) throw new Error('privateKey (PROVENANCE_PRIVATE_KEY) required — used to sign job results');
     this.provenanceId = provenanceId;
     this.privateKey = privateKey;
@@ -58,12 +62,23 @@ export class AJPServer {
     this.onJob = onJob;
     this.constraints = constraints;
     this.trustRequirements = trustRequirements;
-    this.provenance = new Provenance({ apiUrl: provenanceApiUrl });
     // Identity resolution never touches an index by default: a signature check
     // that depends on someone's web service being up is not a signature check.
     this.resolveSenderKey = resolveSenderKey ?? declarationKeyResolver();
     this.checkStanding = checkStanding ?? null;
     this.onStandingUnavailable = onStandingUnavailable;
+
+    // Requirements about standing (incidents, age) can only be answered by
+    // someone you ask. Accepting them with nobody to ask would ignore them
+    // while looking configured, so refuse at startup instead.
+    const needsStanding = ['requireClean', 'requireMinAge', 'requireMinConfidence', 'requireVerified']
+      .filter((k) => trustRequirements[k]);
+    if (needsStanding.length && !this.checkStanding) {
+      throw new Error(
+        `trustRequirements.${needsStanding.join(', ')} need a standing source: pass checkStanding ` +
+        '(e.g. indexStandingCheck(new Provenance({ apiUrl }))), or remove them.'
+      );
+    }
 
     // In-memory job store — replace with DB for production
     this.jobs = new Map();
@@ -89,7 +104,7 @@ export class AJPServer {
             return this._json(res, 403, { error: 'This agent does not accept human callers' });
           }
           if (!verify(offer, this.secret)) {
-            return this._json(res, 401, { error: 'Invalid signature' });
+            return this._json(res, 401, this._badSignature(offer, { secret: this.secret }));
           }
         } else {
           // Agent/orchestrator callers: Ed25519. The key comes from whatever the
@@ -106,7 +121,28 @@ export class AJPServer {
             return this._json(res, 403, { error: 'Sender identity could not be established', reason: 'No public key resolved' });
           }
           if (!verifyWithKey(offer, sender.publicKey)) {
-            return this._json(res, 401, { error: 'Invalid signature' });
+            return this._json(res, 401, this._badSignature(offer, { publicKey: sender.publicKey }));
+          }
+
+          // Declared commitments are checked against the sender's own signed
+          // declaration when the resolver supplied one — no index needed. With
+          // no declaration and no standing source they cannot be checked at
+          // all, and are refused rather than skipped.
+          const { requireConstraints = [], requireCapabilities = [] } = this.trustRequirements;
+          if (requireConstraints.length || requireCapabilities.length) {
+            if (sender.declaration) {
+              const has = (list, v) => Array.isArray(list) && list.includes(v);
+              const missingC = requireConstraints.find((c) => !has(sender.declaration.constraints, c));
+              if (missingC) return this._json(res, 403, { error: 'Trust check failed', reason: `Sender has not committed to constraint: ${missingC}` });
+              const missingK = requireCapabilities.find((c) => !has(sender.declaration.capabilities, c));
+              if (missingK) return this._json(res, 403, { error: 'Trust check failed', reason: `Sender does not declare capability: ${missingK}` });
+            } else if (!this.checkStanding) {
+              return this._json(res, 403, {
+                error: 'Trust requirements could not be checked',
+                reason: 'No sender declaration was resolved and no standing source is configured',
+                code: 'REQUIREMENTS_UNCHECKABLE',
+              });
+            }
           }
         }
 
@@ -259,7 +295,7 @@ export class AJPServer {
       job.updated_at = job.completed_at;
       job.usage.duration_seconds = durationSeconds;
 
-      // Sign the result with Ed25519 — callers verify using this agent's public key from Provenance index.
+      // Sign the result with Ed25519 — callers verify it against the public key in this agent's declaration.
       // constraints_asserted is included in the signed payload — a cryptographic receipt of declared behavior.
       job.signature = signWithKey({
         job_id: job.job_id,
@@ -320,6 +356,17 @@ export class AJPServer {
     // Raw Node http.ServerResponse
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
+  }
+
+  _badSignature(offer, keys) {
+    if (isLegacySignature(offer, keys)) {
+      return {
+        error: 'Invalid signature',
+        code: 'LEGACY_SIGNATURE',
+        reason: 'Signed by ajp-protocol < 0.3, whose signatures do not cover the job contents. The sender must upgrade.',
+      };
+    }
+    return { error: 'Invalid signature' };
   }
 
   async _parseBody(req) {

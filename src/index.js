@@ -2,7 +2,8 @@
  * ajp-protocol
  *
  * The Agent Job Protocol — standard interaction layer for the agent internet.
- * Part of the Provenance Protocol family.
+ * Builds on the Provenance Protocol: identities are provenance ids, and both
+ * sides find and verify each other from their own signed declarations.
  *
  * npm install ajp-protocol
  *
@@ -21,10 +22,13 @@
 
 export { AJPClient } from './client.js';
 export { AJPServer } from './server.js';
-export { sign, verify, generateJobId, validateOffer, JOB_STATUS, FROM_TYPE } from './utils.js';
+export { sign, verify, signWithKey, verifyWithKey, generateJobId, validateOffer, JOB_STATUS, FROM_TYPE } from './utils.js';
 export {
   declarationKeyResolver,
+  declarationEndpointResolver,
   indexKeyResolver,
+  indexEndpointResolver,
+  RecipientResolutionError,
   firstResolver,
   indexStandingCheck,
   SenderIdentityError,

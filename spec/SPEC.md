@@ -27,8 +27,9 @@ inside is yours to define. An agent that searches the web and an agent that
 processes invoices use the same protocol.
 
 **Trust is built in, not bolted on.** Every JobOffer is signed by the sender.
-Every receiver verifies the sender against the Provenance index before accepting.
-Trust verification is part of the protocol, not optional middleware.
+Every receiver verifies the sender against the sender's own signed Provenance
+declaration before accepting — offline, with no index involved. Trust
+verification is part of the protocol, not optional middleware.
 
 **Three parties, same protocol.** A human hiring an agent, an agent hiring an
 agent, and an orchestrator delegating to sub-agents all use identical message
@@ -46,7 +47,7 @@ types. The `from` field distinguishes them.
 
 A human (or a platform acting on their behalf) sends a JobOffer to an agent.
 The `from.type` is `human`. No Provenance verification of the sender is required
-— humans are not indexed agents. Platform-level auth handles human identity.
+— humans do not publish agent declarations. Platform-level auth handles human identity.
 
 ```
 Human / Platform  ──JobOffer──►  Agent
@@ -222,7 +223,7 @@ Status values: `accepted` `running` `completed` `failed` `rejected` `expired`
 }
 ```
 
-`constraints_asserted` lists the constraints the agent declares it honored during this job. The field is included in the signed payload — the signature ties the assertion to the agent's registered Provenance identity. Self-reported, but attributable: a false assertion is a cryptographic receipt of the lie, actionable via the Provenance incidents system.
+`constraints_asserted` lists the constraints the agent declares it honored during this job. The field is included in the signed payload — the signature ties the assertion to the key in the agent's declaration. Self-reported, but attributable: a false assertion is a cryptographic receipt of the lie, which the receiver can hand to any attester as evidence (a Provenance `report` attestation can reference it).
 
 ---
 
@@ -236,7 +237,9 @@ questions, and only one of them needs a network service.
 *Is this signature really from the party named in `from`?*
 
 The sender publishes its signed declaration and points at it with
-`from.declaration_url`. The receiver fetches that file and verifies it locally:
+`from.declaration_url`; when absent, the receiver uses the standard location its
+`provenance_id` names (see *Where a declaration lives* in the Provenance
+specification). The receiver fetches that file and verifies it locally:
 
 ```js
 import { verifyDeclaration } from 'provenance-protocol/verify';
@@ -275,16 +278,24 @@ NOT hardcode a single provider.
 
 ```js
 import { AJPServer, declarationKeyResolver, indexStandingCheck } from 'ajp-protocol';
-import { Provenance } from 'provenance-protocol';
+import { Provenance } from 'provenance-protocol/index-client';
+
+const index = new Provenance({ apiUrl: 'https://index.example.com' }); // an index you choose
 
 const server = new AJPServer({
-  provenanceId, onJob,
-  resolveSenderKey: declarationKeyResolver(),          // offline, the default
-  checkStanding: indexStandingCheck(new Provenance(), // opt-in, swappable
-    { requireConstraints: ['no:pii'], requireClean: true, requireMinAge: 7 }),
+  provenanceId, privateKey, onJob,
+  resolveSenderKey: declarationKeyResolver(),  // offline, the default
+  trustRequirements: { requireConstraints: ['no:pii'], requireClean: true, requireMinAge: 7 },
+  checkStanding: indexStandingCheck(index, { requireClean: true, requireMinAge: 7 }), // opt-in, swappable
   onStandingUnavailable: 'deny',
 });
 ```
+
+Requirements on **declared** fields (`requireConstraints`, `requireCapabilities`)
+are checked against the sender's verified declaration, offline. Requirements on
+**standing** (`requireClean`, `requireMinAge`, …) need a standing source; an
+implementation MUST refuse to start with them configured and no source, rather
+than accept jobs while ignoring them.
 
 A receiver that performs a standing check MUST distinguish *checked and failed*
 from *could not check*, and MUST state which way it fails when the check is
@@ -299,7 +310,16 @@ offer, and the shared-secret signature covers it.
 ## Signature
 
 Every JobOffer and JobResult is signed by the sender. The signature covers the
-full message body excluding the `signature` field itself, with keys sorted canonically.
+full message body excluding the `signature` field itself — every field at every
+depth. `canonical(body)` is the canonical JSON defined by the Provenance
+Protocol, which is the JSON Canonicalization Scheme (JCS, RFC 8785): object
+keys sorted by UTF-16 code units at every depth, no insignificant whitespace.
+
+Implementations before `ajp-protocol` 0.3 serialised only the top-level keys:
+nested objects — `task`, `budget`, `from`, `to`, `context`, `output` — were
+emptied before signing, so they were not covered and could be altered without
+detection. A receiver MUST NOT accept such signatures. It MAY recognise one in
+order to tell the sender to upgrade.
 
 **Human senders** (no Provenance identity) — HMAC-SHA256 with a shared secret:
 ```
@@ -311,8 +331,12 @@ signature = "sha256:" + hex(HMAC-SHA256(canonical(body), sender_secret))
 signature = "ed25519:" + base64(Ed25519Sign(canonical(body), provenance_private_key))
 ```
 
-The receiving server verifies agent signatures by fetching the sender's public key from the
-Provenance index. This ties every message to a registered identity without a shared secret.
+The receiving server verifies agent signatures against the public key in the
+sender's own verified declaration (see Trust verification). This ties every
+message to a published identity without a shared secret or an index.
+
+A sender SHOULD verify a JobResult's signature the same way, against the key in
+the recipient's declaration, before relying on it.
 
 The `ajp-protocol` SDK handles signing and verification automatically based on `from.type`.
 
@@ -369,7 +393,7 @@ const result = await client.send(
 Agents that implement AJP should declare it:
 
 ```yaml
-provenance: "0.1"
+provenance: "0.2"
 name: "Research Assistant"
 
 capabilities:
@@ -382,8 +406,11 @@ ajp:
   version: "0.1"
 ```
 
-The Provenance crawler reads the `ajp.endpoint` field and indexes it. Senders
-can discover an agent's AJP endpoint without out-of-band communication.
+A sender finds an agent's AJP endpoint by fetching the agent's declaration from
+the location its `provenance_id` names, verifying it, and reading
+`ajp.endpoint`. Because the declaration is signed and tied to its location, the
+endpoint is the operator's own statement — no directory or index is needed.
+Indexes may also record it, as a convenience.
 
 ---
 
@@ -407,6 +434,5 @@ version. Future versions add fields, never remove them.
 
 ---
 
-*AJP v0.1 — Provenance Protocol Family — MIT License*
-*https://getprovenance.dev/ajp*
+*AJP v0.1 — MIT License*
 *https://github.com/ilucky21c/ajp-protocol*

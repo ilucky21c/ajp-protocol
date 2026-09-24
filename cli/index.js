@@ -2,18 +2,22 @@
 /**
  * ajp-cli — Agent Job Protocol CLI
  *
- * Requires Provenance identity (PROVENANCE_ID + PROVENANCE_PRIVATE_KEY).
- * For identity setup: npx provenance-protocol keygen / npx provenance-protocol register
+ * Requires a Provenance identity (PROVENANCE_ID + PROVENANCE_PRIVATE_KEY).
+ * For identity setup: npx provenance-protocol keygen, then publish a signed
+ * declaration (npx provenance-protocol sign).
  *
  * Usage:
  *   ajp hire <provenance_id> --instruction <text> [--budget <usd>] [--timeout <s>]
  *   ajp jobs <job_id> --endpoint <url>
  */
 
-import { createPrivateKey, sign as nodeSign, randomBytes } from 'crypto';
+import { randomBytes } from 'crypto';
+import { createRequire } from 'module';
+import YAML from 'yaml';
+import { signWithKey, declarationEndpointResolver, indexEndpointResolver } from 'ajp-protocol';
+import { Provenance } from 'provenance-protocol/index-client';
 
-const API     = process.env.PROVENANCE_API_URL || 'https://getprovenance.dev';
-const VERSION = '0.1.0';
+const VERSION = createRequire(import.meta.url)('./package.json').version;
 
 // ── Colours ───────────────────────────────────────────────────────────────────
 
@@ -50,11 +54,16 @@ function generateJobId() {
   return `job_${Date.now().toString(36)}${randomBytes(6).toString('hex')}`;
 }
 
-function signOffer(offer, privateKeyBase64) {
-  const { signature: _, ...rest } = offer;
-  const canonical = JSON.stringify(rest, Object.keys(rest).sort());
-  const key = createPrivateKey({ key: Buffer.from(privateKeyBase64, 'base64'), format: 'der', type: 'pkcs8' });
-  return `ed25519:${nodeSign(null, Buffer.from(canonical, 'utf8'), key).toString('base64')}`;
+// Where to send the job. By default, read from the recipient's own signed
+// declaration — no index involved. --endpoint skips resolution; --index asks
+// an index you name instead.
+async function resolveEndpoint(targetId, args) {
+  if (typeof args.endpoint === 'string') return args.endpoint.replace(/\/$/, '');
+  const index = args.index || process.env.PROVENANCE_INDEX_URL;
+  const resolver = typeof index === 'string'
+    ? indexEndpointResolver(new Provenance({ apiUrl: index }))
+    : declarationEndpointResolver({ parseDeclaration: (text) => YAML.parse(text) });
+  return resolver(targetId);
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -70,19 +79,19 @@ async function cmdHire(args) {
   if (!targetId)     { console.error(err('Usage: ajp hire <provenance_id> --instruction <text>')); process.exit(1); }
   if (!instruction)  { console.error(err('--instruction required')); process.exit(1); }
   if (!privateKey)   { console.error(err('PROVENANCE_PRIVATE_KEY not set. Run: npx provenance-protocol keygen')); process.exit(1); }
-  if (!provenanceId) { console.error(err('PROVENANCE_ID not set. Run: npx provenance-protocol register')); process.exit(1); }
+  if (!provenanceId) { console.error(err('PROVENANCE_ID not set — your agent\'s provenance id')); process.exit(1); }
 
   console.log(`\n${amb('Hiring')} ${hi(targetId)}...\n`);
 
-  // Resolve endpoint
   process.stdout.write(dim('  Resolving endpoint...'));
-  const agentRes  = await fetch(`${API}/api/agent/${targetId.replace('provenance:', '').replace(':', '/')}`);
-  const agentData = await agentRes.json();
-  if (!agentData?.ajp?.endpoint) {
-    console.log('\n' + err('Agent has no AJP endpoint. Ask them to add ajp.endpoint to PROVENANCE.yml.'));
-    process.exit(1);
+  let endpoint;
+  try {
+    endpoint = await resolveEndpoint(targetId, args);
+  } catch (e) {
+    console.log('\n' + err(e.message));
+    console.log(dim('  Nothing was sent. Pass --endpoint <url> if you know where the agent accepts jobs.'));
+    process.exit(2);
   }
-  const endpoint = agentData.ajp.endpoint.replace(/\/$/, '');
   console.log(` ${c.green}${endpoint}${c.reset}`);
 
   // Build and sign offer
@@ -92,7 +101,10 @@ async function cmdHire(args) {
 
   const offer = {
     ajp: '0.1', job_id: jobId, parent_job_id: null,
-    from: { type: 'orchestrator', id: null, provenance_id: provenanceId },
+    from: {
+      type: 'orchestrator', id: null, provenance_id: provenanceId,
+      declaration_url: args['declaration-url'] || process.env.PROVENANCE_DECLARATION_URL || null,
+    },
     to:   { provenance_id: targetId },
     task: { type: 'task', instruction, input: {}, output_format: 'json' },
     context: { credentials: {}, memory: [], constraints: [] },
@@ -102,7 +114,7 @@ async function cmdHire(args) {
     expires_at: expiresAt.toISOString(),
     signature: '',
   };
-  offer.signature = signOffer(offer, privateKey);
+  offer.signature = signWithKey(offer, privateKey);
 
   // Submit
   process.stdout.write(dim('  Submitting job...'));
@@ -191,17 +203,21 @@ ${amb('Commands:')}
          [--timeout <seconds>]      Max wait time (default: 120)
          [--from-id <id>]           Your Provenance ID (default: $PROVENANCE_ID)
          [--private-key <key>]      Your private key (default: $PROVENANCE_PRIVATE_KEY)
+         [--declaration-url <url>]  Where your signed declaration is published
+         [--endpoint <url>]         Send here instead of reading the recipient's declaration
+         [--index <url>]            Resolve the recipient through this index instead
 
   ${hi('jobs')}  <job_id>                   Check status of a job
          --endpoint <url>           The agent's AJP endpoint URL
 
 ${amb('Environment variables:')}
-  PROVENANCE_ID           Your Provenance ID  (set up with: npx provenance-protocol register)
-  PROVENANCE_PRIVATE_KEY  Your Ed25519 private key  (set up with: npx provenance-protocol keygen)
-  PROVENANCE_API_URL      Override Provenance API base URL
+  PROVENANCE_ID               Your provenance id
+  PROVENANCE_PRIVATE_KEY      Your Ed25519 private key  (npx provenance-protocol keygen)
+  PROVENANCE_DECLARATION_URL  Where your signed declaration is published
+  PROVENANCE_INDEX_URL        Resolve recipients through this index (optional)
 
 ${amb('Examples:')}
-  ajp hire provenance:github:alice/summarizer \\
+  ajp hire provenance:domain:summarizer.example.com \\
     --instruction "Summarize https://arxiv.org/abs/2501.00001" \\
     --budget 0.50 --timeout 60
 
@@ -209,8 +225,9 @@ ${amb('Examples:')}
 
 ${amb('Identity setup (first time):')}
   npx provenance-protocol keygen
-  npx provenance-protocol register --id provenance:github:your-org/your-agent --url <url>
-  ${dim('Then set PROVENANCE_ID and PROVENANCE_PRIVATE_KEY in your environment.')}
+  npx provenance-protocol sign PROVENANCE.yml
+  ${dim('Publish the declaration where your provenance id says, then set')}
+  ${dim('PROVENANCE_ID and PROVENANCE_PRIVATE_KEY in your environment.')}
 `);
 }
 

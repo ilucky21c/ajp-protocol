@@ -1,7 +1,7 @@
 {
   "name": "ajp-protocol",
-  "version": "0.2.2",
-  "description": "Agent Job Protocol \u2014 standard interaction layer for the agent internet",
+  "version": "0.3.0",
+  "description": "Agent Job Protocol — standard interaction layer for the agent internet",
   "type": "module",
   "main": "./src/index.js",
   "exports": {
@@ -17,14 +17,14 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "provenance-protocol": "^0.2.2"
+    "provenance-protocol": "^0.6.0"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/ilucky21c/ajp-protocol"
   },
-  "homepage": "https://getprovenance.dev/ajp",
+  "homepage": "https://github.com/ilucky21c/ajp-protocol#readme",
   "scripts": {
-    "test": "node test/trust.test.mjs"
+    "test": "node test/trust.test.mjs && node test/resolution.test.mjs"
   }
 }

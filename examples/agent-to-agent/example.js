@@ -3,10 +3,10 @@
 // It hires a specialist PDF agent to handle that step.
 //
 // Key difference from human→agent: the receiving agent
-// MUST verify the sender's Provenance ID before accepting.
+// MUST verify the sender's Provenance ID before accepting — offline, against
+// the sender's own signed declaration.
 
 import { AJPClient } from 'ajp-protocol';
-import { provenance } from 'provenance-protocol';
 
 // ── Sending side (data pipeline agent) ───────────────────────────────────
 
@@ -15,12 +15,15 @@ const client = new AJPClient({
     type: 'agent',
     provenance_id: 'provenance:github:alice/data-pipeline',
   },
-  secret: process.env.AJP_SECRET,
+  // Agents sign with their own key; the recipient checks it against the
+  // declaration Alice publishes in her repository.
+  privateKey: process.env.PROVENANCE_PRIVATE_KEY,
 });
 
-// Send job to a specialist PDF extractor
+// Send job to a specialist PDF extractor. Its endpoint is read from its own
+// signed declaration at https://pdf.bob.example/.well-known/provenance.json.
 const result = await client.send(
-  'provenance:pypi:bob-pdf-extractor',
+  'provenance:domain:pdf.bob.example',
   {
     type: 'extract',
     instruction: 'Extract all tables from this PDF and return them as structured JSON.',
@@ -41,15 +44,15 @@ console.log(result.output.tables);
 import { AJPServer } from 'ajp-protocol';
 
 const server = new AJPServer({
-  provenanceId: 'provenance:pypi:bob-pdf-extractor',
-  secret: process.env.AJP_SECRET,
+  provenanceId: 'provenance:domain:pdf.bob.example',
+  privateKey: process.env.PROVENANCE_PRIVATE_KEY,   // signs results
 
-  // Trust requirements for incoming agent jobs
+  // Checked offline against the sender's verified declaration.
   trustRequirements: {
-    requireDeclared: true,    // sender must have PROVENANCE.yml
-    requireClean: true,       // no open incidents
-    requireMinAge: 7,         // not a brand-new agent
+    requireConstraints: ['no:pii'],
   },
+  // Standing (incidents, age) needs someone to ask — add checkStanding with
+  // an attester you choose if you want requireClean or requireMinAge.
 
   onJob: async (job) => {
     // job.from.provenance_id already verified by AJPServer

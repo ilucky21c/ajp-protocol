@@ -1,7 +1,9 @@
 # ajp-protocol
 
 The Agent Job Protocol — standard interaction layer for the agent internet.
-Part of the [Provenance Protocol](https://getprovenance.dev) family.
+Built on the [Provenance Protocol](https://github.com/ilucky21c/provenance-protocol):
+agents find and verify each other from their own signed declarations, with no
+directory or index in between.
 
 ```bash
 npm install ajp-protocol
@@ -15,7 +17,7 @@ AJP defines how any party — a human, an agent, or an orchestrator — hands a
 job to another agent, tracks its progress, and receives the result.
 
 Three endpoints. Three message types. Runs over standard HTTP.
-Trust verification via `provenance-protocol` built in.
+Every message is signed in full; identity is checked offline.
 
 ---
 
@@ -26,7 +28,7 @@ and job lifecycle automatically.
 
 ```js
 import { AJPServer, declarationKeyResolver, indexStandingCheck } from 'ajp-protocol';
-import { Provenance } from 'provenance-protocol';
+import { Provenance } from 'provenance-protocol/index-client';
 import express from 'express';
 
 const app = express();
@@ -47,15 +49,17 @@ const server = new AJPServer({
   // This is the default — no index is consulted to check a signature.
   resolveSenderKey: declarationKeyResolver(),
 
+  // Requirements on what the sender declares are checked offline, against
+  // its verified declaration.
+  trustRequirements: { requireCapabilities: ['delegate:agents'] },
+
   // Standing (revocation, incidents, freshness) cannot be checked offline, so
   // it is opt-in and you choose whom to ask. Omit it entirely to accept any
   // sender whose identity verifies.
-  checkStanding: indexStandingCheck(new Provenance(), {
-    requireDeclared: true,
-    requireCapabilities: ['delegate:agents'],
-    requireClean: true,
-    requireMinAge: 7,
-  }),
+  checkStanding: indexStandingCheck(
+    new Provenance({ apiUrl: 'https://index.example.com' }),   // an index you choose
+    { requireClean: true, requireMinAge: 7 }
+  ),
   onStandingUnavailable: 'deny',   // an unreachable attester is not an accusation
 
   // Your agent logic — receives the job, returns the result
@@ -84,12 +88,14 @@ const client = new AJPClient({
     type: 'agent',   // 'human' | 'agent' | 'orchestrator'
     provenance_id: 'provenance:github:alice/orchestrator',
   },
+  // Where the recipient's endpoint comes from: by default its own signed
+  // declaration, found from its provenance id. No index involved.
   // Agent/orchestrator callers sign with Ed25519 — no shared secret needed
   privateKey: process.env.PROVENANCE_PRIVATE_KEY,
 });
 
 const result = await client.send(
-  'provenance:github:bob/research-assistant',  // who to hire
+  'provenance:domain:research.bob.example',     // who to hire
   {
     type: 'research',
     instruction: 'Find the top 3 papers on transformer attention in 2024.',
@@ -122,7 +128,7 @@ const result = await client.send(agentId, task, budget);
 ### Agent hiring an agent
 ```js
 // Agent callers sign with Ed25519 — no shared secret, no prior setup
-// The receiving agent verifies by fetching your public key from Provenance index
+// The receiving agent verifies against the key in your published declaration
 const client = new AJPClient({
   from: { type: 'agent', provenance_id: 'provenance:github:alice/pipeline' },
   privateKey: process.env.PROVENANCE_PRIVATE_KEY,
@@ -149,12 +155,14 @@ Two separate questions, and only one of them needs a network service.
 AJPServer.receive()
   → validate the offer's shape
   → IDENTITY  (offline, always)
-      fetch the sender's declaration from from.declaration_url
+      fetch the sender's declaration (from.declaration_url, or the
+      standard location its provenance id names)
       → does it verify against the key inside it?
       → was it served from the location its provenance id names?
       → is that id the one the offer claims?
       → has this sender's key changed since last time?
       then check the offer's signature with that key
+      → does the declaration promise what trustRequirements ask?
   → STANDING  (online, optional, you choose the attester)
       → revoked? open incidents? evidence stale? old enough?
       → unreachable attester → your policy, not a failed trust check
@@ -173,7 +181,7 @@ Platform-level auth is assumed for humans.
 ## Declare AJP in your PROVENANCE.yml
 
 ```yaml
-provenance: "0.1"
+provenance: "0.2"
 name: "Research Assistant"
 
 capabilities:
@@ -186,8 +194,9 @@ ajp:
   version: "0.1"
 ```
 
-The Provenance crawler reads `ajp.endpoint` and indexes it.
-Senders can discover your endpoint without out-of-band configuration.
+Senders read `ajp.endpoint` from your signed declaration, so they can find
+you without out-of-band configuration — and without trusting anyone's copy of
+it. Sign the declaration with `npx provenance-protocol sign`.
 
 ---
 
@@ -200,6 +209,7 @@ import { NextResponse } from 'next/server';
 
 const server = new AJPServer({
   provenanceId: process.env.PROVENANCE_ID,
+  privateKey: process.env.PROVENANCE_PRIVATE_KEY,   // signs results
   secret: process.env.AJP_SECRET,
   onJob: async (job) => {
     // your agent logic
@@ -218,17 +228,17 @@ export async function POST(req) {
 
 | Package | Purpose |
 |---|---|
-| `provenance-protocol` | Query the agent identity index |
+| [`provenance-protocol`](https://github.com/ilucky21c/provenance-protocol) | Declarations and attestations: sign, verify, locate — offline |
 | `ajp-protocol` | Send and receive agent jobs (this package) |
-| `PROVENANCE.yml` | Declare your agent's identity and capabilities |
+| [`provenance-middleware`](https://github.com/ilucky21c/provenance-middleware) | Serve and sign your declaration from your own service |
 
 ---
 
 ## CLI
 
 ```bash
-# Send a job to any indexed agent from the terminal
-npx @ilucky21c/ajp-cli hire provenance:github:alice/summarizer \
+# Send a job to any agent that publishes a declaration with ajp.endpoint
+npx @ilucky21c/ajp-cli hire provenance:domain:summarizer.example.com \
   --instruction "Summarize this paper: https://arxiv.org/abs/..." \
   --budget 0.50 --timeout 60
 
@@ -236,16 +246,34 @@ npx @ilucky21c/ajp-cli hire provenance:github:alice/summarizer \
 npx @ilucky21c/ajp-cli jobs job_m0abc123 --endpoint https://alice-agent.example.com/api/agent
 ```
 
-Requires Provenance identity — set up first with `npx provenance-protocol keygen` and `npx provenance-protocol register`.
-
-Full CLI reference: [getprovenance.dev/docs/ajp#cli](https://getprovenance.dev/docs/ajp#cli)
-
----
-
-## Full documentation
-
-[getprovenance.dev/docs/ajp](https://getprovenance.dev/docs/ajp)
+Requires a Provenance identity — `npx provenance-protocol keygen`, then publish a
+signed declaration. `--endpoint <url>` skips resolution; `--index <url>`
+resolves through an index you choose instead.
 
 ---
 
-## MIT License — getprovenance.dev
+## Upgrading from 0.2
+
+- **Signatures now cover the whole message.** Before 0.3 only top-level keys were
+  signed and every nested field — the task, budget, sender, recipient, result —
+  was left out, so a signed job could be rewritten in transit. Old and new
+  versions do not interoperate; upgrade both sides. A 0.3 receiver answers an
+  old-style signature with `LEGACY_SIGNATURE`.
+- `AJPClient` finds the recipient from its own declaration by default.
+  `provenanceApiUrl` is gone (passing it throws); use
+  `resolveEndpoint: indexEndpointResolver(new Provenance({ apiUrl }))` to keep
+  using an index, or `send(..., { endpoint })` to skip resolution.
+- `trustRequirements.requireConstraints` / `requireCapabilities` are enforced
+  offline against the sender's declaration. Standing requirements
+  (`requireClean`, `requireMinAge`, …) without `checkStanding` now fail at
+  startup instead of being silently ignored.
+
+---
+
+## Full specification
+
+[spec/SPEC.md](./spec/SPEC.md)
+
+---
+
+## MIT License

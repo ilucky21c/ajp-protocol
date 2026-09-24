@@ -19,7 +19,7 @@
  * them apart: identity never calls out to an index, and standing is opt-in.
  */
 
-import { verifyDeclaration, keyFingerprint } from 'provenance-protocol/verify';
+import { verifyDeclaration, keyFingerprint, locateDeclaration } from 'provenance-protocol/verify';
 
 /** Thrown when a sender's identity cannot be established. */
 export class SenderIdentityError extends Error {
@@ -36,7 +36,8 @@ const FETCH_TIMEOUT_MS = 8000;
 /**
  * Resolve a sender's public key from its own declaration, with no index.
  *
- * The sender points at where its declaration lives (`from.declaration_url`).
+ * The sender points at where its declaration lives (`from.declaration_url`),
+ * or — for domain and GitHub ids — the id itself names the standard location.
  * Hosting a copy elsewhere does not help an impostor: the declaration names
  * its own provenance id, and a declaration served from a location that does
  * not match that id is rejected. Forging one is not possible without the
@@ -51,7 +52,7 @@ const FETCH_TIMEOUT_MS = 8000;
  * @param {(declaration: string) => unknown} [options.parseDeclaration]  YAML parser.
  *   Declarations are YAML; AJP has no YAML dependency, so supply one to accept
  *   YAML declarations. Without it, only JSON declarations are read.
- * @returns {(provenanceId: string, from: object) => Promise<{publicKey: string, fingerprint: string, source: string}>}
+ * @returns {(provenanceId: string, from: object) => Promise<{publicKey: string, fingerprint: string, source: string, declaration: object}>}
  */
 export function declarationKeyResolver(options = {}) {
   const {
@@ -62,55 +63,17 @@ export function declarationKeyResolver(options = {}) {
   } = options;
 
   return async function resolve(provenanceId, from = {}) {
-    const url = from.declaration_url;
+    // The sender may say where its declaration is; otherwise its provenance id
+    // names the standard location.
+    const url = from.declaration_url || locateDeclaration(provenanceId);
     if (!url) {
       throw new SenderIdentityError(
-        'Sender did not provide from.declaration_url, so its key cannot be established offline',
+        'Sender gave no from.declaration_url and its provenance id has no standard location, so its key cannot be established offline',
         'NO_DECLARATION_URL'
       );
     }
 
-    let text;
-    try {
-      text = await fetchText(url);
-    } catch (e) {
-      throw new SenderIdentityError(`Could not fetch sender declaration: ${e.message}`, 'DECLARATION_UNREACHABLE');
-    }
-
-    let declaration;
-    try {
-      declaration = parseDeclaration ? parseDeclaration(text) : JSON.parse(text);
-    } catch {
-      throw new SenderIdentityError(
-        parseDeclaration
-          ? 'Sender declaration could not be parsed'
-          : 'Sender declaration is not JSON; pass parseDeclaration to accept YAML',
-        'DECLARATION_UNPARSEABLE'
-      );
-    }
-
-    // Verifies the signature against the key inside the file AND that the file
-    // was served from the location its own provenance id names.
-    const result = await verifyDeclaration(declaration, { retrievedFrom: url });
-
-    if (!result.valid) {
-      throw new SenderIdentityError(
-        `Sender declaration did not verify: ${result.reason ?? 'unknown reason'}`,
-        'DECLARATION_INVALID'
-      );
-    }
-    if (result.location !== 'match') {
-      throw new SenderIdentityError(
-        'Sender declaration was not served from the location its provenance id names',
-        'DECLARATION_LOCATION_MISMATCH'
-      );
-    }
-    if (result.provenanceId !== provenanceId) {
-      throw new SenderIdentityError(
-        `Sender declaration is for ${result.provenanceId}, not ${provenanceId}`,
-        'DECLARATION_ID_MISMATCH'
-      );
-    }
+    const result = await fetchVerifiedDeclaration(url, provenanceId, { fetchText, parseDeclaration }, SenderIdentityError, 'Sender');
 
     if (knownKeys) {
       const seen = knownKeys.get(provenanceId);
@@ -123,7 +86,7 @@ export function declarationKeyResolver(options = {}) {
       if (!seen) knownKeys.set(provenanceId, result.fingerprint);
     }
 
-    return { publicKey: result.publicKey, fingerprint: result.fingerprint, source: url };
+    return { publicKey: result.publicKey, fingerprint: result.fingerprint, source: url, declaration: result.declaration };
   };
 }
 
@@ -134,7 +97,7 @@ export function declarationKeyResolver(options = {}) {
  * fetch — but note this makes identity verification depend on that service
  * being reachable, which `declarationKeyResolver` does not.
  *
- * @param {object} provenanceClient  An instance of Provenance from provenance-protocol
+ * @param {object} provenanceClient  new Provenance({ apiUrl }) from provenance-protocol/index-client
  */
 export function indexKeyResolver(provenanceClient) {
   return async function resolve(provenanceId) {
@@ -178,13 +141,133 @@ export function firstResolver(...resolvers) {
  * Opt-in on purpose. A receiver may use this, another attester, several, or
  * none — standing is a policy question, not a protocol requirement.
  *
- * @param {object} provenanceClient   An instance of Provenance
+ * @param {object} provenanceClient   new Provenance({ apiUrl }) from provenance-protocol/index-client
  * @param {object} [requirements]     Passed through to gate()
  */
 export function indexStandingCheck(provenanceClient, requirements = {}) {
   return async function check(provenanceId) {
     const result = await provenanceClient.gate(provenanceId, requirements);
     return { allowed: result.allowed, reason: result.reason ?? null, fallback: result.fallback ?? false };
+  };
+}
+
+/**
+ * Fetch a declaration, verify its signature, and confirm it was served from the
+ * location its own provenance id names and is for the agent expected.
+ * Throws `ErrorType` with a specific code for each way it can fail.
+ */
+async function fetchVerifiedDeclaration(url, provenanceId, { fetchText, parseDeclaration }, ErrorType, who) {
+  let text;
+  try {
+    text = await fetchText(url);
+  } catch (e) {
+    throw new ErrorType(`Could not fetch ${who.toLowerCase()} declaration: ${e.message}`, 'DECLARATION_UNREACHABLE');
+  }
+
+  let declaration;
+  try {
+    declaration = parseDeclaration ? parseDeclaration(text) : JSON.parse(text);
+  } catch {
+    throw new ErrorType(
+      parseDeclaration
+        ? `${who} declaration could not be parsed`
+        : `${who} declaration is not JSON; pass parseDeclaration to accept YAML`,
+      'DECLARATION_UNPARSEABLE'
+    );
+  }
+
+  // Verifies the signature against the key inside the file AND that the file
+  // was served from the location its own provenance id names.
+  const result = await verifyDeclaration(declaration, { retrievedFrom: url });
+
+  if (!result.valid) {
+    throw new ErrorType(`${who} declaration did not verify: ${result.reason ?? 'unknown reason'}`, 'DECLARATION_INVALID');
+  }
+  if (result.location !== 'match') {
+    throw new ErrorType(`${who} declaration was not served from the location its provenance id names`, 'DECLARATION_LOCATION_MISMATCH');
+  }
+  if (result.provenanceId !== provenanceId) {
+    throw new ErrorType(`${who} declaration is for ${result.provenanceId}, not ${provenanceId}`, 'DECLARATION_ID_MISMATCH');
+  }
+  return { ...result, declaration };
+}
+
+/** Thrown when the agent a job is addressed to cannot be located. */
+export class RecipientResolutionError extends Error {
+  constructor(message, code = 'RECIPIENT_UNRESOLVED') {
+    super(message);
+    this.name = 'RecipientResolutionError';
+    this.code = code;
+  }
+}
+
+/**
+ * Find where to send a job from the recipient's own declaration, with no index.
+ *
+ * The declaration is found from the provenance id alone (a domain id at
+ * /.well-known/provenance.json, a GitHub id at PROVENANCE.yml), verified, and
+ * its `ajp.endpoint` used. Because the declaration is signed and tied to its
+ * location, an endpoint read this way is the operator's, not a third party's
+ * record of it.
+ *
+ * @param {object} [options]
+ * @param {Record<string,string>} [options.declarationUrls]  provenanceId -> URL, for
+ *        platforms without a standard location (npm, pypi, …)
+ * @param {(url: string) => Promise<string>} [options.fetchText]
+ * @param {(text: string) => unknown} [options.parseDeclaration]  YAML parser, needed
+ *        for GitHub-hosted declarations
+ * @returns {(provenanceId: string) => Promise<string>}  the endpoint base URL
+ */
+export function declarationEndpointResolver(options = {}) {
+  const { declarationUrls = {}, fetchText = defaultFetchText, parseDeclaration } = options;
+
+  return async function resolveEndpoint(provenanceId) {
+    const url = declarationUrls[provenanceId] ?? locateDeclaration(provenanceId);
+    if (!url) {
+      throw new RecipientResolutionError(
+        `${provenanceId} has no standard declaration location; supply it in declarationUrls`,
+        'NO_DECLARATION_LOCATION'
+      );
+    }
+    const { declaration } = await fetchVerifiedDeclaration(
+      url, provenanceId, { fetchText, parseDeclaration }, RecipientResolutionError, 'Recipient'
+    );
+
+    const endpoint = declaration.ajp?.endpoint;
+    if (typeof endpoint !== 'string' || !endpoint) {
+      throw new RecipientResolutionError(`${provenanceId} does not declare ajp.endpoint`, 'NO_AJP_ENDPOINT');
+    }
+    let parsed;
+    try { parsed = new URL(endpoint); } catch {
+      throw new RecipientResolutionError(`${provenanceId} declares an ajp.endpoint that is not a URL`, 'BAD_AJP_ENDPOINT');
+    }
+    if (parsed.protocol !== 'https:') {
+      throw new RecipientResolutionError(`${provenanceId} declares a non-HTTPS ajp.endpoint`, 'BAD_AJP_ENDPOINT');
+    }
+    return endpoint.replace(/\/$/, '');
+  };
+}
+
+/**
+ * Find where to send a job by asking an index you choose.
+ *
+ * Makes sending depend on that index being up and correct. Prefer
+ * `declarationEndpointResolver`; use this as a fallback with `firstResolver`.
+ *
+ * @param {object} indexClient  new Provenance({ apiUrl }) from provenance-protocol/index-client
+ */
+export function indexEndpointResolver(indexClient) {
+  return async function resolveEndpoint(provenanceId) {
+    let profile;
+    try {
+      profile = await indexClient.check(provenanceId);
+    } catch (e) {
+      throw new RecipientResolutionError(`Index lookup failed: ${e.message}`, 'INDEX_UNAVAILABLE');
+    }
+    if (!profile?.found) throw new RecipientResolutionError(`${provenanceId} is not in the index`, 'NOT_INDEXED');
+    const endpoint = profile.provenance_yml?.ajp?.endpoint ?? profile.ajp_endpoint;
+    if (!endpoint) throw new RecipientResolutionError(`The index has no ajp.endpoint for ${provenanceId}`, 'NO_AJP_ENDPOINT');
+    return endpoint.replace(/\/$/, '');
   };
 }
 

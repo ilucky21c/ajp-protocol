@@ -6,7 +6,7 @@
  */
 
 import { sign, signWithKey, generateJobId, validateOffer } from './utils.js';
-import { Provenance } from 'provenance-protocol';
+import { declarationEndpointResolver } from './trust.js';
 
 export class AJPClient {
 
@@ -24,15 +24,25 @@ export class AJPClient {
    *                                           Required for agent/orchestrator senders. Allows any
    *                                           indexed agent to call any other without a shared secret.
    * @param {string} [opts.secret]           — HMAC secret. Required for human senders only.
-   * @param {string} [opts.provenanceApiUrl] — override Provenance API URL
+   * @param {function} [opts.resolveEndpoint] — async (provenanceId) => endpoint base URL.
+   *        Defaults to reading `ajp.endpoint` from the recipient's own signed
+   *        declaration, verified offline. No index is consulted unless you
+   *        pass indexEndpointResolver.
    * @param {number} [opts.defaultTimeoutMs] — default job timeout in ms (30s)
    */
-  constructor({ from, privateKey, secret, provenanceApiUrl, defaultTimeoutMs = 30000 }) {
+  constructor({ from, privateKey, secret, resolveEndpoint, defaultTimeoutMs = 30000, ...rest }) {
+    if ('provenanceApiUrl' in rest) {
+      // Ignoring it would silently change where jobs are routed.
+      throw new Error(
+        'provenanceApiUrl was removed in ajp-protocol 0.3: recipients are resolved from their own declarations. ' +
+        'To use an index, pass resolveEndpoint: indexEndpointResolver(new Provenance({ apiUrl })).'
+      );
+    }
     this.from = from;
     this.privateKey = privateKey || null;
     this.secret = secret || null;
     this.defaultTimeoutMs = defaultTimeoutMs;
-    this.provenance = new Provenance({ apiUrl: provenanceApiUrl });
+    this.resolveEndpoint = resolveEndpoint ?? declarationEndpointResolver();
 
     if (from.type === 'agent' || from.type === 'orchestrator') {
       if (!from.provenance_id) throw new Error('from.provenance_id required when type is agent or orchestrator');
@@ -56,11 +66,13 @@ export class AJPClient {
    * @param {object} [opts.context]      — { credentials?, memory?, constraints? }
    * @param {object} [opts.callback]     — { url, headers? } for async delivery
    * @param {number} [opts.pollIntervalMs] — how often to poll for result (2000)
+   * @param {string} [opts.endpoint]     — send here instead of resolving the recipient
    * @returns {Promise<JobResult>}
    */
   async send(toProvenanceId, task, budget = {}, opts = {}) {
-    // Resolve the agent's AJP endpoint from Provenance
-    const endpoint = await this._resolveEndpoint(toProvenanceId);
+    const endpoint = opts.endpoint
+      ? opts.endpoint.replace(/\/$/, '')
+      : await this.resolveEndpoint(toProvenanceId);
 
     // Build the job offer
     const jobId = generateJobId();
@@ -186,30 +198,6 @@ export class AJPClient {
     }
 
     throw new Error(`Job timed out after ${timeoutMs}ms`);
-  }
-
-  // ── Endpoint resolution ───────────────────────────────────────────────
-
-  async _resolveEndpoint(provenanceId) {
-    try {
-      const profile = await this.provenance.check(provenanceId);
-      if (!profile.found) throw new Error(`Agent not found in Provenance index: ${provenanceId}`);
-
-      // AJP endpoint is stored in the agent's PROVENANCE.yml
-      const endpoint = profile.provenance_yml?.ajp?.endpoint;
-      if (endpoint) return endpoint.replace(/\/$/, '');
-
-      // Fallback: derive from agent URL — unreliable, agent should declare ajp.endpoint in PROVENANCE.yml
-      if (profile.url) {
-        console.warn(`[AJP] No ajp.endpoint declared for ${provenanceId} — falling back to ${profile.url}/api/agent. Add ajp.endpoint to PROVENANCE.yml for reliability.`);
-        return `${profile.url.replace(/\/$/, '')}/api/agent`;
-      }
-
-      throw new Error(`No AJP endpoint found for ${provenanceId}`);
-    } catch (e) {
-      if (e.message.includes('No AJP endpoint')) throw e;
-      throw new Error(`Could not resolve endpoint for ${provenanceId}: ${e.message}`);
-    }
   }
 
   _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

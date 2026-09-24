@@ -9,7 +9,7 @@ const client = new AJPClient({
     type: 'orchestrator',
     provenance_id: 'provenance:github:alice/research-orchestrator',
   },
-  secret: process.env.AJP_SECRET,
+  privateKey: process.env.PROVENANCE_PRIVATE_KEY,   // orchestrators sign with their own key
 });
 
 const PARENT_JOB_ID = 'job_parent_01J8X2K9M3N4P5Q6';
