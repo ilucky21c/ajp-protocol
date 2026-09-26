@@ -1,6 +1,6 @@
 {
   "name": "ajp-protocol",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Agent Job Protocol — standard interaction layer for the agent internet",
   "type": "module",
   "main": "./src/index.js",
