@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ilucky21c/ajp-protocol.git",
+    "url": "git+https://github.com/provenance-protocol/ajp-protocol.git",
     "directory": "cli"
   },
   "keywords": [

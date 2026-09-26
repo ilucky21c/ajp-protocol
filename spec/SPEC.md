@@ -422,7 +422,7 @@ otherwise, without permission, notification or fee.
 
 AJP describes messages exchanged directly between agents. Nothing in it
 requires contacting any particular service. Trust verification is a separate
-concern, defined by the [Provenance Protocol](https://github.com/ilucky21c/provenance-protocol);
+concern, defined by the [Provenance Protocol](https://github.com/provenance-protocol/provenance-protocol);
 an AJP implementation may use any verifier, or none.
 
 ---
@@ -435,4 +435,4 @@ version. Future versions add fields, never remove them.
 ---
 
 *AJP v0.1 — MIT License*
-*https://github.com/ilucky21c/ajp-protocol*
+*https://github.com/provenance-protocol/ajp-protocol*

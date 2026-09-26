@@ -1,7 +1,7 @@
 # ajp-protocol
 
 The Agent Job Protocol — standard interaction layer for the agent internet.
-Built on the [Provenance Protocol](https://github.com/ilucky21c/provenance-protocol):
+Built on the [Provenance Protocol](https://github.com/provenance-protocol/provenance-protocol):
 agents find and verify each other from their own signed declarations, with no
 directory or index in between.
 
@@ -228,9 +228,9 @@ export async function POST(req) {
 
 | Package | Purpose |
 |---|---|
-| [`provenance-protocol`](https://github.com/ilucky21c/provenance-protocol) | Declarations and attestations: sign, verify, locate — offline |
+| [`provenance-protocol`](https://github.com/provenance-protocol/provenance-protocol) | Declarations and attestations: sign, verify, locate — offline |
 | `ajp-protocol` | Send and receive agent jobs (this package) |
-| [`provenance-middleware`](https://github.com/ilucky21c/provenance-middleware) | Serve and sign your declaration from your own service |
+| [`provenance-middleware`](https://github.com/provenance-protocol/provenance-middleware) | Serve and sign your declaration from your own service |
 
 ---
 
